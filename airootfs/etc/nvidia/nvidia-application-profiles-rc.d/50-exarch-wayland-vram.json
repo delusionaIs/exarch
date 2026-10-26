@@ -1,0 +1,14 @@
+{
+  "rules": [
+    { "pattern": { "feature": "procname", "matches": "niri" }, "profile": "Exarch: limit free buffer pool in Wayland compositors" },
+    { "pattern": { "feature": "procname", "matches": "kwin_wayland" }, "profile": "Exarch: limit free buffer pool in Wayland compositors" },
+    { "pattern": { "feature": "procname", "matches": "quickshell" }, "profile": "Exarch: limit free buffer pool in Wayland compositors" },
+    { "pattern": { "feature": "procname", "matches": "qs" }, "profile": "Exarch: limit free buffer pool in Wayland compositors" }
+  ],
+  "profiles": [
+    {
+      "name": "Exarch: limit free buffer pool in Wayland compositors",
+      "settings": [ { "key": "GLVidHeapReuseRatio", "value": 0 } ]
+    }
+  ]
+}

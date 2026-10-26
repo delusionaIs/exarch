@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Mod+D: Noctalia's launcher if Noctalia is running, otherwise fuzzel.
+if pgrep -f 'qs -c noctalia-shell' >/dev/null 2>&1; then
+  qs -c noctalia-shell ipc call launcher toggle && exit 0
+fi
+exec fuzzel

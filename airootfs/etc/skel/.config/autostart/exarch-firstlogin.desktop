@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Exarch first login
+Exec=/usr/local/bin/exarch-firstlogin
+OnlyShowIn=KDE;
+X-KDE-autostart-phase=2
+NoDisplay=true

@@ -1,0 +1,70 @@
+# binary	stage	description	pack
+git	Code	Version control	base
+lazygit	Code	Git TUI	base
+code	Code	Code-OSS editor (Open VSX)	base
+nvim	Code	Neovim editor	base
+gitleaks	Code	Find secrets in git repos and files	core-tools
+trufflehog	Code	Find and verify leaked credentials	aur-core
+opengrep	Code	SAST engine (Semgrep fork, bring your own rules)	aur-core
+bandit	Code	Python security linter	core-tools
+shellcheck	Code	Shell script linter	core-tools
+hadolint	Build	Dockerfile linter	aur-core
+podman	Build	Rootless containers	core-tools
+buildah	Build	Build OCI images	core-tools
+docker	Build	Docker engine CLI	core-tools
+dive	Build	Explore image layers and wasted space	core-tools
+lazydocker	Build	Docker TUI	core-tools
+syft	Build	Generate SBOMs from images and dirs	core-tools
+act	Build	Run GitHub Actions locally	core-tools
+trivy	Test	Scan images, repos, IaC, k8s for vulns	core-tools
+grype	Test	Vulnerability scanner for images and SBOMs	aur-core
+osv-scanner	Test	Scan dependencies against OSV.dev	core-tools
+checkov	Test	IaC misconfiguration scanner	core-tools
+tflint	Test	Terraform/OpenTofu linter	core-tools
+conftest	Test	Test configs with OPA Rego policies	aur-core
+opa	Test	Open Policy Agent	core-tools
+kubescape	Test	Kubernetes posture scanner (NSA/MITRE)	aur-core
+kube-bench	Test	CIS Kubernetes benchmark	aur-core
+cosign	Release	Sign and verify artifacts (Sigstore)	core-tools
+rekor-cli	Release	Query the Sigstore transparency log	core-tools
+slsa-verifier	Release	Verify SLSA build provenance	core-tools
+skopeo	Release	Copy/inspect images between registries	core-tools
+sops	Release	Encrypt secrets in config files	core-tools
+age	Release	Simple modern file encryption	core-tools
+tofu	Deploy	OpenTofu infrastructure as code	core-tools
+ansible	Deploy	Configuration management	core-tools
+helm	Deploy	Kubernetes package manager	core-tools
+kustomize	Deploy	Kubernetes manifest overlays	core-tools
+kubectl	Operate	Kubernetes CLI	core-tools
+k9s	Operate	Kubernetes TUI	core-tools
+kubectx	Operate	Switch Kubernetes contexts	core-tools
+kind	Operate	Local Kubernetes in containers	core-tools
+k3d	Operate	Local k3s clusters in containers	core-tools
+minikube	Operate	Local Kubernetes VM/containers	core-tools
+bao	Operate	OpenBao secrets manager	core-tools
+stern	Monitor	Tail logs from many pods	core-tools
+btop	Monitor	System monitor	base
+falco	Monitor	Runtime threat detection	runtime
+prowler	Monitor	AWS/Azure/GCP/k8s security assessment	cloud
+steampipe	Monitor	Query cloud APIs with SQL	cloud
+aws	Operate	AWS CLI	cloud
+az	Operate	Azure CLI	cloud
+nmap	Recon	Network scanner	core-tools
+masscan	Recon	Very fast port scanner	core-tools
+tcpdump	Recon	Packet capture	core-tools
+mtr	Recon	Traceroute + ping	core-tools
+dig	Recon	DNS lookup	core-tools
+whois	Recon	Domain registration lookup	core-tools
+http	Recon	HTTPie API client	core-tools
+nuclei	Attack	Template-based vulnerability scanner	core-tools
+ffuf	Attack	Web fuzzer	core-tools
+sqlmap	Attack	SQL injection testing	core-tools
+nikto	Attack	Web server scanner	core-tools
+zaproxy	Attack	OWASP ZAP web app scanner	web
+gobuster	Attack	Directory/DNS brute forcing	web
+feroxbuster	Attack	Recursive content discovery	web
+wireshark	Recon	Packet analyzer GUI	network
+msfconsole	Attack	Metasploit Framework	offensive
+hashcat	Attack	GPU password recovery	offensive
+john	Attack	John the Ripper	offensive
+hydra	Attack	Login brute forcer	offensive

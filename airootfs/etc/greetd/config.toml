@@ -1,0 +1,12 @@
+# Live ISO: log the live user straight in once (session picked by the boot
+# entry), and show the greeter if they log out.
+[terminal]
+vt = 1
+
+[initial_session]
+command = "/usr/local/bin/exarch-session"
+user = "exarch"
+
+[default_session]
+command = "tuigreet --time --remember --remember-user-session --asterisks --greeting 'EXARCH  //  defend · attack · automate' --theme 'border=magenta;title=magenta;greet=magenta;prompt=magenta;time=gray;action=gray;button=magenta;input=white' --sessions /usr/share/wayland-sessions"
+user = "greeter"

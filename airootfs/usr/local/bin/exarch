@@ -1,0 +1,1512 @@
+#!/usr/bin/env bash
+# exarch: one command for living on Exarch.
+#
+#   exarch                          welcome screen (menu) in a terminal, help otherwise
+#   exarch status                   system, GPU, security and toolkit overview
+#   exarch tools [STAGE] [options]  browse the toolkit by DevSecOps stage
+#       -s, --search TEXT           only tools whose name/description matches
+#       --missing | --installed     filter by install state
+#       --plain                     plain list, no fzf browser
+#   exarch packs                    list packs and how much of each is installed
+#   exarch packs show PACK          packages in a pack, installed or not
+#   exarch packs install P[,P...]   install optional packs (wraps exarch-setup)
+#       --accept-nonfree            required for the nonfree pack
+#   exarch driver [status]          NVIDIA driver versions, pin state, rollback targets
+#   exarch driver pin | unpin       hold / release the NVIDIA driver (pacman IgnorePkg)
+#   exarch driver rollback [VER]    reinstall an older NVIDIA driver from the pacman cache
+#   exarch menu sync | clear        app-launcher entries for installed CLI tools
+#   exarch welcome                  the first-login welcome screen
+#   exarch splash [--loop|--static] the 3D logo: spin-in, --loop slow spin until a key, --static
+#   exarch wallpaper [next|set X]   animated wallpapers: Wallpaper Engine scenes, videos, GIFs, the logo
+#   exarch update                   Arch news check, full upgrade (+AUR), then what needs attention
+#   exarch doctor                   health check: failed services, disk, memory hogs, pacnew, reboot...
+#   exarch clean                    free disk space (package cache, orphans, journal) safely
+#   exarch bootsplash [on|off]      Exarch boot splash (Plymouth): logo, glow, themed unlock prompt
+#   exarch version
+set -uo pipefail
+
+EXARCH_CMD_VERSION="1.0"
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+
+# --- data ---------------------------------------------------------------------
+# Installed: /usr/share/exarch. From a repo checkout: the repo root.
+find_data() {
+  local d
+  for d in "${EXARCH_DATA:-}" /usr/share/exarch "$(dirname "$SELF")/../../../.."; do
+    [[ -n "$d" && -f "$d/config/tools.tsv" ]] && { (cd "$d" && pwd -P); return 0; }
+  done
+  return 1
+}
+if ! DATA="$(find_data)"; then
+  echo "exarch: data not found (expected /usr/share/exarch, or set EXARCH_DATA)" >&2
+  exit 1
+fi
+DISTRO_NAME="Exarch"
+DISTRO_ID="exarch"
+# shellcheck source=/dev/null
+[[ -f "$DATA/config/distro.env" ]] && source "$DATA/config/distro.env"
+
+TOOLS_TSV="$DATA/config/tools.tsv"
+PACKS_DIR="$DATA/packs"
+STAGES=(Code Build Test Release Deploy Operate Monitor Recon Attack)
+DEFAULT_PACKS=(desktop base core-tools aur-core aur-wallpaper)
+# Full-screen tools: launched directly instead of showing --help first
+TUI_TOOLS=" lazygit k9s lazydocker btop nvim msfconsole "
+# Driver packages whose versions must move together
+NV_PKGS=(nvidia-open nvidia-open-dkms nvidia-open-lts nvidia nvidia-dkms nvidia-lts
+         nvidia-utils lib32-nvidia-utils nvidia-settings opencl-nvidia lib32-opencl-nvidia)
+PIN_MARKER="# exarch: NVIDIA driver pin (remove with: exarch driver unpin)"
+
+# --- output -------------------------------------------------------------------
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  V=$'\e[38;2;154;92;255m'; VD=$'\e[38;2;122;47;224m'; VL=$'\e[38;2;200;160;255m'
+  B=$'\e[1m'; D=$'\e[2m'; G=$'\e[32m'; Y=$'\e[33m'; R=$'\e[31m'; N=$'\e[0m'
+else
+  V=; VD=; VL=; B=; D=; G=; Y=; R=; N=
+fi
+OK="${G}✓${N}"; NO="${D}·${N}"; WARN="${Y}!${N}"; BAD="${R}✗${N}"
+
+log()  { printf '%s[exarch]%s %s\n' "$B$V" "$N" "$*"; }
+warn() { printf '%s[exarch]%s %s\n' "$B$Y" "$N" "$*" >&2; }
+die()  { printf '%s[exarch]%s %s\n' "$B$R" "$N" "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+clean_list() { sed 's/#.*//; s/[[:space:]]//g; /^$/d' "$@"; }
+is_live() { [[ -d /run/archiso ]]; }
+interactive() { [[ -t 0 && -t 1 ]]; }
+section() { printf '\n  %s%s%s\n' "$B$V" "$1" "$N"; }
+# row MARK KEY VALUE
+row() { printf '  %s %s%-12s%s %s\n' "$1" "$D" "$2" "$N" "$3"; }
+# pkgrow MARK PACKAGE TEXT (wider key column for package names)
+pkgrow() { printf '  %s %-22s %s%s%s\n' "$1" "$2" "$D" "$3" "$N"; }
+confirm() {
+  local a
+  interactive || return 1
+  read -rp "  $1 [y/N] " a
+  [[ "$a" == [yY]* ]]
+}
+pause() { interactive && { printf '\n  %spress any key%s' "$D" "$N"; read -rsn1 _; echo; }; }
+
+# Re-run this command as root (keeps the original arguments)
+as_root() {
+  (( EUID == 0 )) && return 0
+  have sudo || die "needs root and sudo isn't installed"
+  exec sudo -- "$SELF" "$@"
+}
+
+# --- package state ------------------------------------------------------------
+declare -A INSTALLED=()
+INSTALLED_LOADED=0
+load_installed() {
+  (( INSTALLED_LOADED )) && return 0
+  INSTALLED_LOADED=1
+  have pacman || return 0
+  local p
+  while read -r p; do INSTALLED[$p]=1; done < <(pacman -Qq 2>/dev/null)
+}
+pkg_installed() { load_installed; [[ -n "${INSTALLED[$1]:-}" ]]; }
+pkg_version() { pacman -Q "$1" 2>/dev/null | awk '{print $2}'; }
+# 560.35.03-2 -> 560.35.03 ; 1:560.35.03-2 -> 560.35.03
+upstream_ver() { local v="${1%-*}"; echo "${v#*:}"; }
+
+pack_names() {
+  local f
+  for f in "$PACKS_DIR"/*.txt; do [[ -f "$f" ]] && basename "$f" .txt; done
+}
+is_default_pack() { [[ " ${DEFAULT_PACKS[*]} " == *" $1 "* ]]; }
+
+# --- tools catalogue ----------------------------------------------------------
+# Rows: binary<TAB>stage<TAB>description<TAB>pack
+tool_rows() { grep -v '^[[:space:]]*#' "$TOOLS_TSV" | awk -F'\t' 'NF >= 4'; }
+tool_field() { # binary, field number
+  awk -F'\t' -v b="$1" -v f="$2" '!/^[[:space:]]*#/ && $1 == b { print $f; exit }' "$TOOLS_TSV"
+}
+
+# =============================================================================
+# status
+# =============================================================================
+efi_var_byte() { # name -> value of the variable's data byte, or nothing
+  local f="/sys/firmware/efi/efivars/$1-8be4df61-93ca-11d2-aa0d-00e098032b8c"
+  [[ -r "$f" ]] && od -An -t u1 -j4 -N1 "$f" 2>/dev/null | tr -d ' '
+}
+
+secure_boot_state() { # prints: on | off | setup | legacy
+  [[ -d /sys/firmware/efi ]] || { echo legacy; return; }
+  [[ "$(efi_var_byte SetupMode)" == 1 ]] && { echo setup; return; }
+  [[ "$(efi_var_byte SecureBoot)" == 1 ]] && echo on || echo off
+}
+
+nvidia_card() {
+  have lspci || return 0
+  lspci -mm -d 10de: 2>/dev/null | awk -F'"' '$2 ~ /VGA|3D|Display/ { print $6; exit }'
+}
+
+pinned_pkgs() { have pacman-conf && pacman-conf IgnorePkg 2>/dev/null; }
+
+installed_nv() {
+  local p
+  for p in "${NV_PKGS[@]}"; do pkg_installed "$p" && echo "$p"; done
+}
+
+tool_counts() { # prints "available total"
+  local have_n=0 total=0 bin
+  while IFS=$'\t' read -r bin _; do
+    total=$((total + 1))
+    have "$bin" && have_n=$((have_n + 1))
+  done < <(tool_rows)
+  echo "$have_n $total"
+}
+
+pack_counts() { # pack -> "installed total"
+  local n=0 t=0 p
+  load_installed
+  while read -r p; do
+    t=$((t + 1))
+    [[ -n "${INSTALLED[$p]:-}" ]] && n=$((n + 1))
+  done < <(clean_list "$PACKS_DIR/$1.txt")
+  echo "$n $t"
+}
+
+cmd_status() {
+  load_installed
+  printf '\n  %sE X A R C H%s  %sstatus%s\n' "$B$V" "$N" "$D" "$N"
+
+  section "System"
+  if is_live; then row "$WARN" mode "live ISO (changes are lost at reboot)"
+  else row "$OK" mode "installed"; fi
+  row "$NO" kernel "$(uname -r)"
+  local sess="${XDG_CURRENT_DESKTOP:-none (tty)}"
+  if pgrep -f 'qs -c noctalia-shell' >/dev/null 2>&1; then sess+=" · Noctalia"
+  elif pgrep -x waybar >/dev/null 2>&1; then sess+=" · fallback bar"; fi
+  row "$NO" session "$sess"
+
+  section "GPU"
+  local card; card="$(nvidia_card)"
+  if [[ -z "$card" ]]; then
+    row "$NO" card "no NVIDIA GPU (Mesa)"
+  else
+    row "$NO" card "NVIDIA $card"
+    driver_summary_rows
+  fi
+
+  section "Security"
+  case "$(secure_boot_state)" in
+    on)     row "$OK" "secure boot" "on" ;;
+    setup)  row "$WARN" "secure boot" "firmware in Setup Mode: run sudo exarch-setup --secure-boot" ;;
+    off)    row "$NO" "secure boot" "off  (sudo exarch-setup --secure-boot, see README)" ;;
+    legacy) row "$WARN" "secure boot" "booted in legacy BIOS mode" ;;
+  esac
+  if have ufw; then
+    if systemctl is-active -q ufw 2>/dev/null; then row "$OK" firewall "ufw active (deny incoming)"
+    else row "$BAD" firewall "ufw installed but not active: sudo ufw enable"; fi
+  else
+    row "$BAD" firewall "ufw not installed"
+  fi
+  if grep -qw apparmor /sys/kernel/security/lsm 2>/dev/null; then
+    row "$OK" apparmor "active"
+  elif pkg_installed apparmor; then
+    row "$WARN" apparmor "installed, not in the kernel LSM list (lsm=landlock,lockdown,yama,integrity,apparmor,bpf)"
+  else
+    row "$NO" apparmor "not installed"
+  fi
+  if [[ -f /etc/snapper/configs/root ]]; then row "$OK" snapshots "snapper (before every pacman transaction)"
+  elif [[ "$(findmnt -no FSTYPE / 2>/dev/null)" == btrfs ]]; then row "$WARN" snapshots "btrfs, but no snapper config"
+  else row "$NO" snapshots "not set up"; fi
+  if [[ -f /etc/sysctl.d/90-exarch-hardening.conf ]]; then row "$OK" sysctl "hardened"
+  else row "$NO" sysctl "default"; fi
+  if id -nG 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    row "$WARN" docker "you're in the docker group (root-equivalent); prefer rootless podman"
+  fi
+
+  section "Toolkit"
+  local avail total
+  read -r avail total < <(tool_counts)
+  row "$NO" tools "$avail/$total in the catalogue available  (exarch tools)"
+  local pack n t mark extra=()
+  for pack in $(pack_names); do
+    read -r n t < <(pack_counts "$pack")
+    if ! is_default_pack "$pack" && (( n == 0 )); then extra+=("$pack"); continue; fi
+    if (( n == t && t > 0 )); then mark="$OK"
+    elif (( n > 0 )); then mark="$WARN"
+    else mark="$NO"; fi
+    row "$mark" "$pack" "$n/$t packages"
+  done
+  (( ${#extra[@]} )) && row "$NO" "not added" "${extra[*]}  (exarch packs install ...)"
+  echo
+}
+
+# =============================================================================
+# driver
+# =============================================================================
+driver_summary_rows() {
+  local mods utils loaded pinned=0 p
+  mods="$(installed_nv | grep -E '^nvidia(-open)?(-dkms|-lts)?$' | head -n1)"
+  utils="$(pkg_version nvidia-utils)"
+  loaded="$(cat /sys/module/nvidia/version 2>/dev/null)"
+  if [[ -z "$mods" ]]; then
+    row "$BAD" driver "no NVIDIA kernel module package installed"
+    return
+  fi
+  row "$OK" driver "$mods $(pkg_version "$mods")"
+  if [[ -n "$loaded" ]]; then
+    if [[ -n "$utils" && "$loaded" != "$(upstream_ver "$utils")" ]]; then
+      row "$WARN" loaded "$loaded, but $utils is installed: reboot"
+    else
+      row "$OK" loaded "$loaded"
+    fi
+  else
+    row "$WARN" loaded "nvidia module not loaded (nouveau / safe graphics?)"
+  fi
+  for p in $(pinned_pkgs); do [[ "$p" == "$mods" ]] && pinned=1; done
+  if (( pinned )); then row "$OK" pinned "yes  (exarch driver unpin to release)"
+  else row "$NO" pinned "no   (exarch driver pin to hold this version)"; fi
+}
+
+cache_dirs() {
+  if have pacman-conf; then pacman-conf CacheDir 2>/dev/null; else echo /var/cache/pacman/pkg/; fi
+}
+
+# pkg -> lines "fullversion<TAB>file" for every cached build of exactly that package
+cached_builds() {
+  local pkg="$1" dir f base rest
+  while read -r dir; do
+    dir="${dir%/}"
+    [[ -d "$dir" ]] || continue
+    for f in "$dir"/"$pkg"-*.pkg.tar.*; do
+      [[ -f "$f" && "$f" != *.sig ]] || continue
+      base="$(basename "$f")"
+      rest="${base#"$pkg"-}"
+      # what's left must be exactly: pkgver-pkgrel-arch.pkg.tar.ext
+      [[ "$rest" =~ ^([^-]+-[^-]+)-(x86_64|any)\.pkg\.tar\.(zst|xz|gz)$ ]] || continue
+      printf '%s\t%s\n' "${BASH_REMATCH[1]}" "$f"
+    done
+  done < <(cache_dirs)
+}
+
+# Newest cached file of PKG whose upstream version is VER
+cached_file_for() {
+  local pkg="$1" ver="$2" best="" bestv="" v f
+  while IFS=$'\t' read -r v f; do
+    [[ "$(upstream_ver "$v")" == "$ver" ]] || continue
+    if [[ -z "$bestv" ]] || (( $(vercmp "$v" "$bestv") > 0 )); then best="$f"; bestv="$v"; fi
+  done < <(cached_builds "$pkg")
+  [[ -n "$best" ]] && echo "$best"
+}
+
+# Upstream versions of nvidia-utils in the cache, newest first
+cached_driver_versions() {
+  local v
+  cached_builds nvidia-utils | cut -f1 | while read -r v; do upstream_ver "$v"; done |
+    sort -u | sort -rV
+}
+
+# Older driver versions with a cached build of every installed driver package
+rollback_targets() {
+  local cur v p ok
+  cur="$(upstream_ver "$(pkg_version nvidia-utils)")"
+  [[ -n "$cur" ]] || return 0
+  while read -r v; do
+    (( $(vercmp "$v" "$cur") < 0 )) || continue
+    ok=1
+    for p in $(installed_nv); do cached_file_for "$p" "$v" >/dev/null || { ok=0; break; }; done
+    (( ok )) && echo "$v"
+  done < <(cached_driver_versions)
+  return 0
+}
+
+driver_status() {
+  load_installed
+  local card; card="$(nvidia_card)"
+  printf '\n  %sNVIDIA driver%s\n\n' "$B$V" "$N"
+  if [[ -n "$card" ]]; then row "$NO" card "NVIDIA $card"; else row "$NO" card "no NVIDIA GPU detected"; fi
+  local pkgs; pkgs="$(installed_nv)"
+  if [[ -z "$pkgs" ]]; then
+    row "$NO" packages "none installed"
+    echo; return 0
+  fi
+  driver_summary_rows
+  section "Packages"
+  local p pinned; pinned=" $(pinned_pkgs | tr '\n' ' ') "
+  for p in $pkgs; do
+    if [[ "$pinned" == *" $p "* ]]; then pkgrow "$OK" "$p" "$(pkg_version "$p")  pinned"
+    else pkgrow "$NO" "$p" "$(pkg_version "$p")"; fi
+  done
+  local vers; vers="$(rollback_targets)"
+  section "Rollback targets (pacman cache)"
+  if [[ -n "$vers" ]]; then
+    for p in $vers; do row "$NO" "$p" "exarch driver rollback $p"; done
+  elif pkg_installed nvidia-open || pkg_installed nvidia || pkg_installed nvidia-open-lts || pkg_installed nvidia-lts; then
+    row "$NO" none "rollback needs the DKMS module (nvidia-open-dkms)"
+  else
+    row "$NO" none "no complete older driver in the cache"
+  fi
+  echo
+}
+
+pin_list() { # packages to put in IgnorePkg
+  local p
+  for p in $(installed_nv); do echo "$p"; done
+  # Prebuilt (non-DKMS) modules only work with the kernel they were built for
+  if pkg_installed nvidia-open || pkg_installed nvidia; then
+    pkg_installed linux && echo linux
+  fi
+  if pkg_installed nvidia-open-lts || pkg_installed nvidia-lts; then
+    pkg_installed linux-lts && echo linux-lts
+  fi
+  return 0
+}
+
+remove_pin_block() { # file -> stdout without our marker + the line after it
+  awk -v m="$PIN_MARKER" '
+    skip && /^[[:space:]]*IgnorePkg[[:space:]]*=/ { skip = 0; next }
+    { skip = 0 }
+    $0 == m { skip = 1; next }
+    { print }' "$1"
+}
+
+write_pacman_conf() { # new content file -> installs it, restores on parse error
+  local new="$1" conf=/etc/pacman.conf
+  cp -a "$conf" "$conf.exarch-bak"
+  cat "$new" > "$conf"
+  if ! pacman-conf >/dev/null 2>&1; then
+    cp -a "$conf.exarch-bak" "$conf"
+    die "pacman.conf didn't parse after the change; restored the backup"
+  fi
+}
+
+driver_pin() {
+  as_root driver pin
+  load_installed
+  local pkgs; mapfile -t pkgs < <(pin_list | sort -u)
+  (( ${#pkgs[@]} )) || die "no NVIDIA driver packages installed, nothing to pin"
+  grep -q '^\[options\]' /etc/pacman.conf || die "/etc/pacman.conf has no [options] section"
+
+  local tmp; tmp="$(mktemp)"
+  remove_pin_block /etc/pacman.conf |
+    awk -v m="$PIN_MARKER" -v l="IgnorePkg   = ${pkgs[*]}" '
+      { print }
+      !done && /^\[options\]/ { print m; print l; done = 1 }' > "$tmp"
+  write_pacman_conf "$tmp"
+  rm -f "$tmp"
+
+  log "Pinned: ${pkgs[*]}"
+  [[ " ${pkgs[*]} " == *" linux"* ]] &&
+    warn "Your NVIDIA module isn't DKMS, so the kernel is pinned too. nvidia-open-dkms avoids that."
+  log "pacman -Syu now skips these. Release with: exarch driver unpin"
+  log "Backup of the old config: /etc/pacman.conf.exarch-bak"
+}
+
+driver_unpin() {
+  as_root driver unpin
+  if ! grep -qxF "$PIN_MARKER" /etc/pacman.conf; then
+    log "No Exarch driver pin in /etc/pacman.conf."
+    local other; other="$(pinned_pkgs | grep -E '^(nvidia|lib32-nvidia|opencl-nvidia|lib32-opencl-nvidia)' | tr '\n' ' ')"
+    [[ -n "$other" ]] && warn "Still ignored by your own IgnorePkg line: $other(edit /etc/pacman.conf)"
+    return 0
+  fi
+  local tmp; tmp="$(mktemp)"
+  remove_pin_block /etc/pacman.conf > "$tmp"
+  write_pacman_conf "$tmp"
+  rm -f "$tmp"
+  log "Driver unpinned. The next sudo pacman -Syu updates it."
+}
+
+driver_rollback() {
+  local want="${1:-}"
+  as_root driver rollback ${want:+"$want"}
+  load_installed
+  pkg_installed nvidia-utils || die "nvidia-utils isn't installed, nothing to roll back"
+  if pkg_installed nvidia-open || pkg_installed nvidia || pkg_installed nvidia-open-lts || pkg_installed nvidia-lts; then
+    die "Rollback needs the DKMS module (an old prebuilt module won't match your kernel). Switch first: sudo pacman -S nvidia-open-dkms"
+  fi
+
+  local cur; cur="$(upstream_ver "$(pkg_version nvidia-utils)")"
+  local pkgs; mapfile -t pkgs < <(installed_nv)
+  local candidates=()
+  if [[ -n "$want" ]]; then
+    candidates=("$want")
+  else
+    local v
+    while read -r v; do
+      (( $(vercmp "$v" "$cur") < 0 )) && candidates+=("$v")
+    done < <(cached_driver_versions)
+  fi
+  (( ${#candidates[@]} )) || die "No older driver in the pacman cache (installed: $cur). Older builds: https://archive.archlinux.org/packages/n/"
+
+  local target="" files=() missing=() ver p f
+  for ver in "${candidates[@]}"; do
+    files=(); missing=()
+    for p in "${pkgs[@]}"; do
+      if f="$(cached_file_for "$p" "$ver")"; then files+=("$f"); else missing+=("$p"); fi
+    done
+    if (( ${#missing[@]} == 0 )); then target="$ver"; break; fi
+    [[ -n "$want" ]] && die "$ver isn't complete in the cache, missing: ${missing[*]}"
+  done
+  [[ -n "$target" ]] || die "No cached version has all of: ${pkgs[*]}"
+
+  log "Rolling back NVIDIA $cur -> $target:"
+  for f in "${files[@]}"; do printf '    %s\n' "$(basename "$f")"; done
+  confirm "Install these?" || { log "Cancelled."; return 0; }
+  pacman -U --needed "${files[@]}" || die "pacman -U failed"
+  log "Installed. Reboot to load $target."
+  if confirm "Pin $target so pacman -Syu doesn't update it again?"; then
+    INSTALLED_LOADED=0; INSTALLED=()
+    driver_pin
+  fi
+}
+
+cmd_driver() {
+  local sub="${1:-status}"; shift || true
+  have pacman || die "pacman not found: this only works on Exarch/Arch"
+  case "$sub" in
+    status|"") driver_status ;;
+    pin) driver_pin ;;
+    unpin) driver_unpin ;;
+    rollback) driver_rollback "$@" ;;
+    *) die "unknown: exarch driver $sub (status, pin, unpin, rollback)" ;;
+  esac
+}
+
+# =============================================================================
+# packs
+# =============================================================================
+pack_summary() { # pack [count] -> first few package names
+  local names max="${2:-4}"; mapfile -t names < <(clean_list "$PACKS_DIR/$1.txt")
+  local out="${names[*]:0:$max}"
+  (( ${#names[@]} > max )) && out+=" +$(( ${#names[@]} - max )) more"
+  echo "$out"
+}
+
+packs_list() {
+  load_installed
+  printf '\n  %sPacks%s  %s%s%s\n\n' "$B$V" "$N" "$D" "$PACKS_DIR" "$N"
+  local pack n t mark kind
+  for pack in $(pack_names); do
+    read -r n t < <(pack_counts "$pack")
+    if (( n == t && t > 0 )); then mark="$OK"
+    elif (( n > 0 )); then mark="$WARN"
+    else mark="$NO"; fi
+    if is_default_pack "$pack"; then kind="default"
+    elif [[ "$pack" == nonfree ]]; then kind="${Y}not FOSS${N}"
+    else kind="optional"; fi
+    printf '  %s %s%-11s%s %-17s %5s  %s%s%s\n' "$mark" "$B" "$pack" "$N" "$kind" "$n/$t" "$D" "$(pack_summary "$pack")" "$N"
+  done
+  printf '\n  %sexarch packs show PACK · exarch packs install cloud,web%s\n\n' "$D" "$N"
+}
+
+packs_show() {
+  local pack="${1:-}"
+  [[ -n "$pack" ]] || die "usage: exarch packs show PACK"
+  [[ -f "$PACKS_DIR/$pack.txt" ]] || die "no such pack: $pack (exarch packs)"
+  load_installed
+  printf '\n  %s%s%s\n' "$B$V" "$pack" "$N"
+  grep '^#' "$PACKS_DIR/$pack.txt" | sed "s/^#[[:space:]]*/  $D/; s/\$/$N/"
+  echo
+  local p
+  while read -r p; do
+    if pkg_installed "$p"; then pkgrow "$OK" "$p" "$(pkg_version "$p")"
+    else pkgrow "$NO" "$p" "not installed"; fi
+  done < <(clean_list "$PACKS_DIR/$pack.txt")
+  echo
+}
+
+setup_cmd() { # prints the exarch-setup to run
+  if have exarch-setup; then command -v exarch-setup
+  else echo "$DATA/airootfs/usr/local/bin/exarch-setup"; fi
+}
+
+packs_install() {
+  local list=() parts=() nonfree=0 a
+  for a in "$@"; do
+    case "$a" in
+      --accept-nonfree) nonfree=1 ;;
+      -*) die "unknown option: $a" ;;
+      *) IFS=', ' read -ra parts <<<"$a"; list+=("${parts[@]}") ;;
+    esac
+  done
+  (( ${#list[@]} )) || die "usage: exarch packs install PACK[,PACK...] [--accept-nonfree]"
+  local p
+  for p in "${list[@]}"; do
+    [[ -f "$PACKS_DIR/$p.txt" ]] || die "no such pack: $p (available: $(pack_names | tr '\n' ' '))"
+  done
+  if [[ " ${list[*]} " == *" nonfree "* ]] && (( ! nonfree )); then
+    warn "nonfree contains BUSL-1.1 / proprietary software: $(clean_list "$PACKS_DIR/nonfree.txt" | tr '\n' ' ')"
+    die "add --accept-nonfree if you accept those licenses"
+  fi
+  [[ " ${list[*]} " == *" offensive "* ]] &&
+    warn "offensive: only use these tools on systems you own or are allowed to test."
+  is_live && warn "Live ISO: packs install into RAM and are gone after a reboot."
+
+  local joined; joined="$(IFS=,; echo "${list[*]}")"
+  local args=(--packs-only --packs "$joined")
+  (( nonfree )) && args+=(--accept-nonfree)
+  (( EUID == 0 )) && [[ -z "${SUDO_USER:-}" ]] && die "run this from your normal user (it calls sudo itself)"
+  log "Installing: $joined"
+  if (( EUID == 0 )); then
+    env EXARCH_DATA="$DATA" bash "$(setup_cmd)" "${args[@]}" || die "exarch-setup failed"
+  else
+    sudo env EXARCH_DATA="$DATA" bash "$(setup_cmd)" "${args[@]}" || die "exarch-setup failed"
+  fi
+  # New tools -> new launcher entries
+  (( EUID != 0 )) && menu_sync quiet
+  return 0
+}
+
+cmd_packs() {
+  local sub="${1:-list}"; shift || true
+  case "$sub" in
+    list|ls) packs_list ;;
+    show) packs_show "$@" ;;
+    install|add) packs_install "$@" ;;
+    *) die "unknown: exarch packs $sub (list, show, install)" ;;
+  esac
+}
+
+# =============================================================================
+# tools
+# =============================================================================
+normalize_stage() { # case-insensitive match against STAGES
+  local s
+  for s in "${STAGES[@]}"; do [[ "${s,,}" == "${1,,}" ]] && { echo "$s"; return 0; }; done
+  return 1
+}
+
+# Filtered rows (same TSV layout), in stage order
+filtered_tools() { # stage search state(all|missing|installed)
+  local stage="$1" search="${2,,}" state="$3" s bin st desc pack
+  for s in "${STAGES[@]}"; do
+    [[ -n "$stage" && "$s" != "$stage" ]] && continue
+    while IFS=$'\t' read -r bin st desc pack; do
+      [[ "$st" == "$s" ]] || continue
+      if [[ -n "$search" ]]; then
+        local hay="${bin,,} ${desc,,} ${pack,,}"
+        [[ "$hay" == *"$search"* ]] || continue
+      fi
+      case "$state" in
+        missing) have "$bin" && continue ;;
+        installed) have "$bin" || continue ;;
+      esac
+      printf '%s\t%s\t%s\t%s\n' "$bin" "$st" "$desc" "$pack"
+    done < <(tool_rows)
+  done
+}
+
+tools_plain() {
+  local rows="$1" last="" bin st desc pack
+  [[ -n "$rows" ]] || { log "No tools match."; return 0; }
+  while IFS=$'\t' read -r bin st desc pack; do
+    if [[ "$st" != "$last" ]]; then
+      printf '\n  %s%s%s\n' "$B$V" "$st" "$N"
+      last="$st"
+    fi
+    if have "$bin"; then
+      printf '  %s %-13s %s\n' "$OK" "$bin" "$desc"
+    else
+      printf '  %s %s%-13s %s  [%s]%s\n' "$NO" "$D" "$bin" "$desc" "$pack" "$N"
+    fi
+  done <<<"$rows"
+  printf '\n  %s✓ installed · missing ones show their pack: exarch packs install PACK%s\n\n' "$D" "$N"
+}
+
+tools_browse() {
+  local rows="$1" q; q="$(printf '%q' "$SELF")"
+  [[ -n "$rows" ]] || { log "No tools match."; return 0; }
+  local lines bin st desc pack mark
+  lines="$(while IFS=$'\t' read -r bin st desc pack; do
+             if have "$bin"; then mark="$OK"; else mark="$NO"; fi
+             printf '%s %-13s %s%-8s%s %s\n' "$mark" "$bin" "$V" "$st" "$N" "$desc"
+           done <<<"$rows")"
+  fzf --ansi --tiebreak=begin,index --layout=reverse --height=100% --cycle \
+      --prompt='exarch tools ❯ ' --pointer='▌' \
+      --header=$'enter docs/install · ctrl-r run · esc quit\n✓ installed  · not installed' \
+      --color='fg+:#ffffff,bg+:#2a1450,hl:#c8a0ff,hl+:#c8a0ff,prompt:#9a5cff,pointer:#9a5cff,header:#7a7a88,border:#5a28aa,info:#7a7a88' \
+      --preview "$q __preview {2}" --preview-window 'right,55%,wrap,border-left' \
+      --bind "enter:execute($q __open {2})" \
+      --bind "ctrl-r:execute($q __run {2})" \
+      --bind 'ctrl-/:toggle-preview' <<<"$lines" 
+  return 0
+}
+
+cmd_tools() {
+  local stage="" search="" state=all plain=0
+  while (( $# )); do
+    case "$1" in
+      -s|--search) search="${2:-}"; shift 2 ;;
+      --missing) state=missing; shift ;;
+      --installed) state=installed; shift ;;
+      --plain) plain=1; shift ;;
+      -*) die "unknown option: $1" ;;
+      *) stage="$(normalize_stage "$1")" || die "unknown stage: $1 (${STAGES[*]})"; shift ;;
+    esac
+  done
+  local rows; rows="$(filtered_tools "$stage" "$search" "$state")"
+  if (( ! plain )) && interactive && have fzf; then tools_browse "$rows"
+  else tools_plain "$rows"; fi
+}
+
+# fzf preview pane
+tool_preview() {
+  local bin="$1" desc st pack path
+  desc="$(tool_field "$bin" 3)"; st="$(tool_field "$bin" 2)"; pack="$(tool_field "$bin" 4)"
+  printf '%s%s%s\n%s\n\n' "$B$V" "$bin" "$N" "$desc"
+  printf '%sstage%s  %s\n%spack%s   %s\n' "$D" "$N" "$st" "$D" "$N" "$pack"
+  if path="$(command -v "$bin")"; then
+    local owner; owner="$(pacman -Qqo "$path" 2>/dev/null | head -n1)"
+    printf '%spath%s   %s\n' "$D" "$N" "$path"
+    [[ -n "$owner" ]] && printf '%spkg%s    %s %s\n' "$D" "$N" "$owner" "$(pkg_version "$owner")"
+    printf '\n%s✓ installed%s  enter: docs · ctrl-r: run\n' "$G" "$N"
+  else
+    printf '\n%snot installed%s  enter: install the %s pack\n' "$Y" "$N" "$pack"
+  fi
+  if have man && man -w "$bin" >/dev/null 2>&1; then
+    local page
+    page="$(MANWIDTH="${FZF_PREVIEW_COLUMNS:-80}" man -P cat "$bin" 2>/dev/null | col -bx 2>/dev/null |
+              sed -n '/^SYNOPSIS/,$p' | head -n 60)"
+    [[ -n "$page" ]] && printf '\n%s── man %s ──%s\n%s\n' "$D" "$bin" "$N" "$page"
+  fi
+  return 0
+}
+
+# enter in the browser: docs if installed, offer the pack if not
+tool_open() {
+  local bin="$1" pack
+  if have "$bin"; then
+    if have man && man -w "$bin" >/dev/null 2>&1; then
+      man "$bin"
+    else
+      { timeout 5 "$bin" --help </dev/null 2>&1 || true; } | "${PAGER:-less}" -R
+    fi
+    return 0
+  fi
+  pack="$(tool_field "$bin" 4)"
+  clear
+  printf '\n  %s%s%s is not installed. It comes with the %s%s%s pack:\n\n' "$B" "$bin" "$N" "$V" "$pack" "$N"
+  printf '  %s%s%s\n\n' "$D" "$(pack_summary "$pack" 10)" "$N"
+  if [[ "$pack" == nonfree ]]; then
+    printf '  Not open source. Install with: exarch packs install nonfree --accept-nonfree\n'
+    pause; return 0
+  fi
+  if confirm "Install the $pack pack now?"; then
+    packs_install "$pack"
+    pause
+  fi
+}
+
+# ctrl-r in the browser, and the launcher entries: run the tool in this terminal
+tool_run() {
+  local bin="$1" desc; desc="$(tool_field "$bin" 3)"
+  have "$bin" || { tool_open "$bin"; return 0; }
+  if [[ "$TUI_TOOLS" == *" $bin "* ]]; then
+    "$bin"
+    return 0
+  fi
+  clear
+  printf '\n  %s%s%s  %s%s%s\n\n' "$B$V" "$bin" "$N" "$D" "$desc" "$N"
+  { timeout 5 "$bin" --help </dev/null 2>&1 || true; } | head -n 40
+  printf '\n  %s%s is ready. Type exit to leave.%s\n\n' "$D" "$bin" "$N"
+  EXARCH_BANNER_SHOWN=1 "${SHELL:-bash}"
+}
+
+# =============================================================================
+# menu: launcher entries
+# =============================================================================
+menu_dir() { echo "${XDG_DATA_HOME:-$HOME/.local/share}/applications"; }
+
+desktop_entry() { # file name genericname comment exec icon categories terminal
+  cat > "$1" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$2
+GenericName=$3
+Comment=$4
+Exec=$5
+Icon=$6
+Terminal=$8
+Categories=$7
+Keywords=exarch;devsecops;
+X-Exarch-Generated=true
+EOF
+}
+
+menu_clear() {
+  local dir; dir="$(menu_dir)"
+  rm -f "$dir"/exarch-tool-*.desktop "$dir"/exarch-browser.desktop "$dir"/exarch-welcome.desktop
+}
+
+menu_sync() {
+  local quiet="${1:-}" dir icon term_exec term n=0 bin st desc pack
+  dir="$(menu_dir)"
+  mkdir -p "$dir"
+  menu_clear
+  icon="$DATA/branding/logo-128.png"
+  [[ -f "$icon" ]] || icon=utilities-terminal
+  if have kitty; then term_exec="kitty --class exarch-tool -e"; term=false
+  else term_exec=""; term=true; fi
+  local launch="${term_exec:+$term_exec }$SELF"
+
+  desktop_entry "$dir/exarch-browser.desktop" "Exarch Tools" "Toolkit browser" \
+    "Browse the DevSecOps toolkit by stage" "$launch tools" "$icon" "System;Security;X-Exarch;" "$term"
+  desktop_entry "$dir/exarch-welcome.desktop" "Exarch Welcome" "Welcome screen" \
+    "Status, packs and driver at a glance" "$launch welcome" "$icon" "System;X-Exarch;" "$term"
+
+  while IFS=$'\t' read -r bin st desc pack; do
+    have "$bin" || continue
+    # GUI apps and tools that ship their own launcher entry don't need ours
+    [[ -f "/usr/share/applications/$bin.desktop" ]] && continue
+    case "$bin" in code|wireshark|zaproxy) continue ;; esac
+    desktop_entry "$dir/exarch-tool-$bin.desktop" "$bin" "$desc" "$st · $desc ($pack)" \
+      "$launch __run $bin" "utilities-terminal" "Development;Security;X-Exarch;X-Exarch-$st;" "$term"
+    n=$((n + 1))
+  done < <(tool_rows)
+  have update-desktop-database && update-desktop-database -q "$dir" 2>/dev/null
+  [[ "$quiet" == quiet ]] || log "$n tool launchers in $dir (search them with Super+D)"
+  return 0
+}
+
+cmd_menu() {
+  case "${1:-sync}" in
+    sync) menu_sync ;;
+    clear) menu_clear; log "Removed the Exarch launcher entries." ;;
+    *) die "unknown: exarch menu $1 (sync, clear)" ;;
+  esac
+}
+
+# =============================================================================
+# welcome
+# =============================================================================
+render_logo() {
+  local f="$DATA/branding/logo.txt" line
+  [[ -f "$f" ]] || return 0
+  while IFS= read -r line; do
+    line="${line//\$1/$VD}"
+    line="${line//\$2/$VL}"
+    printf '  %s%s\n' "$line" "$N"
+  done < "$f"
+}
+
+# =============================================================================
+# splash: the 3D logo (airootfs/usr/local/lib/exarch/splash.py)
+# =============================================================================
+# The Rust renderer (exarch-splash) is the real one: ~1% CPU, 3 MB RAM. The
+# Python script is the fallback when the binary wasn't built.
+splash_bin() {
+  local f
+  for f in "$(command -v exarch-splash 2>/dev/null)" "$DATA/rust/exarch-splash/target/release/exarch-splash"; do
+    [[ -n "$f" && -x "$f" ]] && { echo "$f"; return 0; }
+  done
+  return 1
+}
+
+splash_py() {
+  local f
+  have python3 || return 1
+  for f in /usr/local/lib/exarch/splash.py "$DATA/airootfs/usr/local/lib/exarch/splash.py"; do
+    [[ -f "$f" ]] && { echo "$f"; return 0; }
+  done
+  return 1
+}
+
+have_splash() { splash_bin >/dev/null || splash_py >/dev/null; }
+
+run_splash() {
+  local bin py
+  if bin="$(splash_bin)"; then
+    "$bin" --name "$DISTRO_NAME" --mask "$DATA/branding/logo-mask.txt" "$@"
+  elif py="$(splash_py)"; then
+    [[ " $* " == *" --wallpaper "* ]] && return 1     # wallpaper mode is Rust-only
+    python3 "$py" --name "$DISTRO_NAME" --mask "$DATA/branding/logo-mask.txt" "$@"
+  else
+    return 1
+  fi
+}
+
+cmd_splash() {
+  have_splash || die "no splash renderer: build it with  cargo build --release --manifest-path $DATA/rust/exarch-splash/Cargo.toml"
+  run_splash "$@"
+}
+
+# =============================================================================
+# wallpaper: Exarch's own GPU shader wallpapers (free), Wallpaper Engine scenes
+# (Steam Workshop), videos, GIFs, images, or the spinning logo. Picked
+# automatically at login, changed with a picker.
+#   shader  mpvpaper + an Exarch GLSL shader (wallpapers/shaders, or your own
+#           in ~/.config/exarch/shaders); pauses itself when hidden
+#   engine  linux-wallpaperengine (needs Wallpaper Engine bought on Steam)
+#   video   mpvpaper (any mp4/webm/mkv; pauses itself when hidden)
+#   image   awww (png/jpg/webp, and animated GIFs), with a transition
+#   logo    exarch-splash in a kitty background panel
+# =============================================================================
+WALL_DIR="${EXARCH_WALLPAPERS:-$HOME/Pictures/Wallpapers}"
+WE_APP=431960
+wall_state_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/exarch/wallpaper"; }
+wall_log() { mkdir -p "${XDG_CACHE_HOME:-$HOME/.cache}/exarch"; echo "${XDG_CACHE_HOME:-$HOME/.cache}/exarch/wallpaper.log"; }
+
+# Every Steam library that has Wallpaper Engine workshop content
+we_dirs() {
+  local root lib
+  for root in "$HOME/.local/share/Steam" "$HOME/.steam/steam" \
+              "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam" \
+              "$HOME/snap/steam/common/.local/share/Steam"; do
+    [[ -d "$root/steamapps" ]] || continue
+    echo "$root"
+    [[ -f "$root/steamapps/libraryfolders.vdf" ]] &&
+      sed -n 's/^[[:space:]]*"path"[[:space:]]*"\(.*\)"/\1/p' "$root/steamapps/libraryfolders.vdf"
+  done | while read -r lib; do
+    [[ -d "$lib/steamapps/workshop/content/$WE_APP" ]] && realpath "$lib/steamapps/workshop/content/$WE_APP"
+  done | sort -u
+}
+
+we_assets_found() {
+  local root
+  for root in "$HOME/.local/share/Steam" "$HOME/.steam/steam" "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam"; do
+    [[ -d "$root/steamapps/common/wallpaper_engine/assets" ]] && return 0
+  done
+  return 1
+}
+
+# Library rows: kind<TAB>target<TAB>label<TAB>preview-image
+wall_library() {
+  local d item title type prev f ext
+  if have linux-wallpaperengine && have jq; then
+    while IFS= read -r d; do
+      for item in "$d"/*/; do
+        item="${item%/}"
+        [[ -f "$item/project.json" ]] || continue
+        title="$(jq -r '.title // empty' "$item/project.json" 2>/dev/null)"
+        type="$(jq -r '.type // "scene"' "$item/project.json" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+        prev="$(jq -r '.preview // empty' "$item/project.json" 2>/dev/null)"
+        printf 'engine\t%s\t%-6s %s\t%s\n' "$item" "$type" "${title:-$(basename "$item")}" "${prev:+$item/$prev}"
+      done
+    done < <(we_dirs)
+  fi
+  if have mpvpaper; then
+    for f in "$DATA"/wallpapers/shaders/*.glsl "${XDG_CONFIG_HOME:-$HOME/.config}"/exarch/shaders/*.glsl; do
+      [[ -f "$f" ]] || continue
+      title="$(sed -n 's#^//!DESC \(Exarch wallpaper: \)\{0,1\}##p' "$f" | head -n1)"
+      prev="$(dirname "$f")/previews/$(basename "$f" .glsl).jpg"
+      [[ -f "$prev" ]] || prev=""
+      printf 'shader\t%s\tshader %s\t%s\n' "$f" "${title:-$(basename "$f" .glsl)}" "$prev"
+    done
+  fi
+  if [[ -d "$WALL_DIR" ]]; then
+    while IFS= read -r -d '' f; do
+      ext="${f##*.}"; ext="${ext,,}"
+      case "$ext" in
+        mp4|webm|mkv|mov) have mpvpaper && printf 'video\t%s\tvideo  %s\t\n' "$f" "$(basename "$f")" ;;
+        gif) printf 'image\t%s\tgif    %s\t%s\n' "$f" "$(basename "$f")" "$f" ;;
+        png|jpg|jpeg|webp) printf 'image\t%s\timage  %s\t%s\n' "$f" "$(basename "$f")" "$f" ;;
+      esac
+    done < <(find "$WALL_DIR" -maxdepth 2 -type f -print0 2>/dev/null | sort -z)
+  fi
+  splash_bin >/dev/null && have kitty && printf 'logo\t-\texarch spinning 3D logo\t\n'
+  printf 'image\t%s\texarch default wallpaper\t%s\n' "$DATA/branding/wallpaper-1080p.png" "$DATA/branding/wallpaper-1080p.png"
+}
+
+wall_outputs() {
+  if have niri && have jq && niri msg --json outputs >/dev/null 2>&1; then
+    niri msg --json outputs | jq -r 'keys[]'
+    return
+  fi
+  local s
+  for s in /sys/class/drm/card*-*/status; do
+    [[ "$(cat "$s" 2>/dev/null)" == connected ]] && basename "$(dirname "$s")" | sed 's/^card[0-9]*-//'
+  done
+}
+
+wall_kill() {
+  pkill -u "$(id -u)" -x linux-wallpaperengine 2>/dev/null
+  pkill -u "$(id -u)" -x mpvpaper 2>/dev/null
+  pkill -u "$(id -u)" -f 'exarch-splash .*--wallpaper' 2>/dev/null
+  return 0
+}
+
+awww_ready() {
+  have awww || return 1
+  awww query >/dev/null 2>&1 && return 0
+  setsid -f awww-daemon >/dev/null 2>&1 </dev/null
+  local _
+  for _ in 1 2 3 4 5 6 7 8 9 10; do awww query >/dev/null 2>&1 && return 0; sleep 0.2; done
+  return 1
+}
+
+# Noctalia draws its own wallpaper on the same layer; switch that off once so
+# ours is visible. Only touches the setting if it exists exactly as expected.
+noctalia_wallpaper_off() {
+  local f="${XDG_CONFIG_HOME:-$HOME/.config}/noctalia/settings.json" tmp
+  [[ -f "$f" ]] && have jq || return 0
+  [[ "$(jq -r '.wallpaper.enabled // empty' "$f" 2>/dev/null)" == true ]] || return 0
+  cp -a "$f" "$f.pre-exarch"
+  tmp="$(mktemp)" && jq '.wallpaper.enabled = false' "$f" > "$tmp" && mv "$tmp" "$f"
+}
+
+wall_apply() { # kind target
+  local kind="$1" target="$2" log o args=()
+  log="$(wall_log)"
+  [[ -n "${WAYLAND_DISPLAY:-}" ]] || die "not in a Wayland session"
+  noctalia_wallpaper_off
+  case "$kind" in
+    shader)
+      have mpvpaper || die "mpvpaper isn't installed: exarch packs install aur-wallpaper"
+      local fps="${EXARCH_WALLPAPER_FPS:-30}" live
+      [[ "$fps" =~ ^[0-9]+$ ]] && (( fps >= 5 && fps <= 240 )) || fps=30
+      # mpv only draws the shader on top of a video, so feed it a tiny blank one;
+      # the shader runs at full screen resolution on mpv's OUTPUT stage.
+      live="${XDG_CACHE_HOME:-$HOME/.cache}/exarch/wallpaper-shader.glsl"
+      mkdir -p "$(dirname "$live")"
+      sed "s/^#define FPS .*/#define FPS ${fps}.0/" "$target" > "$live"
+      wall_kill
+      setsid -f mpvpaper -p -o "no-audio --keepaspect=no --glsl-shaders=$live" ALL \
+        "av://lavfi:color=c=black:s=64x36:r=$fps" >"$log" 2>&1 </dev/null ;;
+    engine)
+      have linux-wallpaperengine || die "linux-wallpaperengine isn't installed: exarch packs install aur-wallpaperengine"
+      we_assets_found || warn "Wallpaper Engine's assets weren't found; scene wallpapers need it installed in Steam (see: exarch wallpaper help)"
+      args=(--silent --fps "${EXARCH_WALLPAPER_FPS:-30}" --scaling fill)
+      while read -r o; do [[ -n "$o" ]] && args+=(--screen-root "$o" --bg "$target"); done < <(wall_outputs)
+      (( ${#args[@]} > 5 )) || args+=("$target")   # no outputs found: let it pick
+      wall_kill
+      setsid -f linux-wallpaperengine "${args[@]}" >"$log" 2>&1 </dev/null ;;
+    video)
+      have mpvpaper || die "mpvpaper isn't installed: exarch packs install aur-wallpaper"
+      wall_kill
+      # -p: pause while hidden behind windows; -f: detach
+      setsid -f mpvpaper -p -o "no-audio --loop --hwdec=auto --panscan=1.0" ALL "$target" >"$log" 2>&1 </dev/null ;;
+    image)
+      wall_kill
+      if awww_ready; then
+        awww img "$target" --transition-type grow --transition-pos 0.5,0.5 \
+          --transition-duration 1.2 --transition-fps 60 >"$log" 2>&1
+      elif have swaybg; then
+        pkill -u "$(id -u)" -x swaybg 2>/dev/null
+        setsid -f swaybg -m fill -i "$target" >"$log" 2>&1 </dev/null
+      else
+        die "no image wallpaper tool (awww or swaybg)"
+      fi ;;
+    logo)
+      have kitty || die "kitty isn't installed"
+      local bin; bin="$(splash_bin)" || die "exarch-splash (Rust) isn't built"
+      wall_kill
+      setsid -f kitty +kitten panel --edge=background --class exarch-wallpaper \
+        -o background=#0a0910 -o background_opacity=1 -o font_size=10 \
+        "$bin" --wallpaper --name "$DISTRO_NAME" --mask "$DATA/branding/logo-mask.txt" \
+        >"$log" 2>&1 </dev/null ;;
+    *) die "unknown wallpaper kind: $kind" ;;
+  esac
+  mkdir -p "$(dirname "$(wall_state_file)")"
+  printf '%s\t%s\n' "$kind" "$target" > "$(wall_state_file)"
+}
+
+# At login: the last choice, or the best thing available
+wall_start() {
+  local kind target row
+  if IFS=$'\t' read -r kind target 2>/dev/null < "$(wall_state_file)" && [[ -n "$kind" ]]; then
+    if [[ "$kind" == logo || -e "$target" ]]; then
+      wall_apply "$kind" "$target"
+      return
+    fi
+  fi
+  # first run: a Wallpaper Engine scene if you have any, then your videos,
+  # then one of Exarch's shaders, then the default image
+  row="$(wall_library | awk -F'\t' '$1 == "engine"' | shuf -n1)"
+  [[ -n "$row" ]] || row="$(wall_library | awk -F'\t' '$1 == "video"' | shuf -n1)"
+  [[ -n "$row" ]] || row="$(wall_library | awk -F'\t' '$1 == "shader"' | shuf -n1)"
+  [[ -n "$row" ]] || row="$(wall_library | awk -F'\t' '$1 == "image" && $2 !~ /\/branding\//' | shuf -n1)"
+  [[ -n "$row" ]] || row="$(wall_library | tail -n1)"
+  IFS=$'\t' read -r kind target _ <<<"$row"
+  wall_apply "$kind" "$target"
+}
+
+wall_preview() { # fzf preview: picture if there is one, else details
+  local kind="$1" target="$2" label="$3" img="$4"
+  printf '%s%s%s\n%s\n\n' "$B$V" "$label" "$N" "$target"
+  [[ -n "$img" && -f "$img" ]] || { [[ "$kind" == video ]] && echo "(video: plays muted, pauses when hidden)"; return 0; }
+  local place="${FZF_PREVIEW_COLUMNS:-40}x$(( ${FZF_PREVIEW_LINES:-20} - 4 ))@0x4"
+  if [[ -n "${KITTY_WINDOW_ID:-}" ]] && have kitten; then
+    kitten icat --clear --transfer-mode=memory --unicode-placeholder --stdin=no --place="$place" "$img" 2>/dev/null
+  elif have chafa; then
+    chafa -s "${FZF_PREVIEW_COLUMNS:-40}x$(( ${FZF_PREVIEW_LINES:-20} - 4 ))" "$img" 2>/dev/null
+  fi
+}
+
+wall_pick() {
+  have fzf || die "fzf isn't installed"
+  local lib q sel kind target
+  lib="$(wall_library)"
+  [[ -n "$lib" ]] || die "nothing to pick from"
+  q="$(printf '%q' "$SELF")"
+  sel="$(fzf --ansi --delimiter=$'\t' --with-nth=3 --layout=reverse --height=100% \
+           --prompt='wallpaper ❯ ' --pointer='▌' \
+           --header=$'enter apply · esc cancel   (Wallpaper Engine workshop, ~/Pictures/Wallpapers, built-ins)' \
+           --color='fg+:#ffffff,bg+:#2a1450,hl:#c8a0ff,hl+:#c8a0ff,prompt:#9a5cff,pointer:#9a5cff,header:#7a7a88' \
+           --preview "$q __wallpreview {1} {2} {3} {4}" --preview-window 'right,55%,border-left' <<<"$lib")" || return 0
+  IFS=$'\t' read -r kind target _ <<<"$sel"
+  wall_apply "$kind" "$target" && log "Wallpaper set."
+}
+
+wall_set() { # a file, a workshop folder, or a workshop ID
+  local x="$1" d
+  if [[ "$x" =~ ^[0-9]+$ ]]; then
+    while IFS= read -r d; do
+      [[ -d "$d/$x" ]] && { wall_apply engine "$d/$x"; return; }
+    done < <(we_dirs)
+    die "workshop item $x isn't downloaded: subscribe to it in Steam first"
+  fi
+  [[ -e "$x" ]] || die "not found: $x"
+  x="$(realpath "$x")"
+  if [[ -d "$x" && -f "$x/project.json" ]]; then wall_apply engine "$x"; return; fi
+  case "${x##*.}" in
+    glsl) wall_apply shader "$x" ;;
+    mp4|webm|mkv|mov|MP4|WEBM|MKV|MOV) wall_apply video "$x" ;;
+    *) wall_apply image "$x" ;;
+  esac
+}
+
+wall_status() {
+  local kind target
+  IFS=$'\t' read -r kind target 2>/dev/null < "$(wall_state_file)"
+  printf '  %scurrent%s   %s %s\n' "$D" "$N" "${kind:-none}" "${target:-}"
+  local n_we n_vid n_img
+  local n_sh lib
+  lib="$(wall_library)"
+  n_sh="$(grep -c '^shader' <<<"$lib")"; n_we="$(grep -c '^engine' <<<"$lib")"
+  n_vid="$(grep -c '^video' <<<"$lib")"; n_img="$(grep -c '^image' <<<"$lib")"
+  printf '  %slibrary%s   %s shaders, %s Wallpaper Engine, %s videos, %s images/GIFs\n' "$D" "$N" "$n_sh" "$n_we" "$n_vid" "$n_img"
+  printf '  %sfolder%s    %s\n' "$D" "$N" "$WALL_DIR"
+  local t
+  if have mpvpaper; then printf '  %s mpvpaper (shaders, videos)\n' "$OK"; else printf '  %s mpvpaper (exarch packs install aur-wallpaper)\n' "$NO"; fi
+  if have awww; then printf '  %s awww (images, GIFs)\n' "$OK"; else printf '  %s awww (exarch packs install core-tools)\n' "$NO"; fi
+  if have linux-wallpaperengine; then printf '  %s linux-wallpaperengine\n' "$OK"
+  else printf '  %s linux-wallpaperengine (optional, needs Wallpaper Engine on Steam: exarch packs install aur-wallpaperengine)\n' "$NO"; fi
+  if have linux-wallpaperengine; then
+    if we_assets_found; then printf '  %s Wallpaper Engine assets found\n' "$OK"
+    else printf '  %s Wallpaper Engine not installed in Steam (needed for scenes, see exarch wallpaper help)\n' "$NO"; fi
+  fi
+}
+
+wall_help() {
+  cat <<EOF
+
+  ${B}${V}exarch wallpaper${N}   animated wallpapers on niri
+
+  ${B}Free, built in:${N} Exarch's own GPU shaders (nebula, synthwave, aurora,
+  neon logo). They're drawn live by your GPU and pause while windows cover them.
+  EXARCH_WALLPAPER_FPS=60 for smoother (default 30). Your own shaders go in
+    ${XDG_CONFIG_HOME:-$HOME/.config}/exarch/shaders/NAME.glsl   (copy one of ours to start)
+
+  exarch wallpaper              pick one (preview + apply)
+  exarch wallpaper next         a random one from your library
+  exarch wallpaper set THING    a shader (.glsl), video, image, GIF, workshop folder or ID
+  exarch wallpaper logo         the spinning Exarch logo
+  exarch wallpaper static       the default Exarch image
+  exarch wallpaper browse       open the Wallpaper Engine workshop in Steam
+  exarch wallpaper status | stop | start
+
+  ${B}Wallpaper Engine${N} (optional, €4.99 on Steam) through linux-wallpaperengine.
+  It needs Wallpaper Engine bought on Steam, for its assets:
+    0. exarch packs install aur-wallpaperengine
+    1. Steam -> Wallpaper Engine -> Properties -> Compatibility -> force Proton
+    2. Install it (you never have to run it)
+    3. Subscribe to wallpapers in the workshop (exarch wallpaper browse)
+    4. exarch wallpaper   -> they show up in the list
+  Scene and video wallpapers work best; web ones are hit and miss.
+
+  ${B}Free, no Steam:${N} drop .mp4/.webm videos, GIFs or images into
+    $WALL_DIR
+  Logs: $(wall_log)
+
+EOF
+}
+
+cmd_wallpaper() {
+  local sub="${1:-}"; shift || true
+  case "$sub" in
+    "") if interactive; then wall_pick; else wall_status; fi ;;
+    pick) wall_pick ;;
+    next)
+      local row kind target
+      row="$(wall_library | grep -v -F "$(cut -f2 "$(wall_state_file)" 2>/dev/null || echo NONE)" | shuf -n1)"
+      [[ -n "$row" ]] || die "library is empty"
+      IFS=$'\t' read -r kind target _ <<<"$row"
+      wall_apply "$kind" "$target" && log "Wallpaper: $(cut -f3 <<<"$row")" ;;
+    set) [[ -n "${1:-}" ]] || die "usage: exarch wallpaper set FILE|FOLDER|WORKSHOP_ID"; wall_set "$1" ;;
+    logo|live) wall_apply logo - ;;
+    static|off) wall_apply image "$DATA/branding/wallpaper-1080p.png" ;;
+    start) wall_start ;;
+    restart) wall_kill; wall_start ;;
+    stop) wall_kill ;;
+    status) wall_status ;;
+    browse) xdg-open "steam://url/SteamWorkshopPage/$WE_APP" >/dev/null 2>&1 || log "Open: https://steamcommunity.com/app/$WE_APP/workshop/" ;;
+    dir) mkdir -p "$WALL_DIR"; echo "$WALL_DIR" ;;
+    help|-h|--help) wall_help ;;
+    *) wall_set "$sub" ;;
+  esac
+}
+
+# =============================================================================
+# bootsplash: Plymouth with the Exarch theme (logo, breathing glow, unlock prompt)
+# =============================================================================
+BS_STATE=/etc/exarch/bootsplash.state
+MKINIT=/etc/mkinitcpio.conf
+
+boot_entries() { # systemd-boot entry files
+  local d
+  for d in /boot/loader/entries /efi/loader/entries /boot/efi/loader/entries; do
+    [[ -d "$d" ]] && find "$d" -maxdepth 1 -name '*.conf' 2>/dev/null
+  done
+}
+
+bs_backup() { [[ -f "$1" && ! -f "$1.pre-exarch-splash" ]] && cp -a "$1" "$1.pre-exarch-splash"; return 0; }
+
+# Remembers, per file, whether *we* added "quiet", so "off" only removes our own.
+bs_mark_quiet() { mkdir -p "$(dirname "$BS_STATE")"; grep -qxF "quiet:$1" "$BS_STATE" 2>/dev/null || echo "quiet:$1" >> "$BS_STATE"; }
+bs_we_added_quiet() { grep -qxF "quiet:$1" "$BS_STATE" 2>/dev/null; }
+
+bs_add_params() { # add "quiet splash" wherever the kernel command line lives
+  local f
+  while read -r f; do
+    [[ -n "$f" ]] || continue
+    bs_backup "$f"
+    grep -qE '^options.*\bquiet\b' "$f" || { sed -i -E '/^options/ s/$/ quiet/' "$f"; bs_mark_quiet "$f"; }
+    grep -qE '^options.*\bsplash\b' "$f" || sed -i -E '/^options/ s/$/ splash/' "$f"
+  done < <(boot_entries)
+  if [[ -f /etc/kernel/cmdline ]]; then                       # UKIs / kernel-install
+    bs_backup /etc/kernel/cmdline
+    grep -qw quiet /etc/kernel/cmdline || { sed -i '1 s/$/ quiet/' /etc/kernel/cmdline; bs_mark_quiet /etc/kernel/cmdline; }
+    grep -qw splash /etc/kernel/cmdline || sed -i '1 s/$/ splash/' /etc/kernel/cmdline
+  fi
+  if [[ -f /etc/default/grub ]] && have grub-mkconfig; then
+    bs_backup /etc/default/grub
+    grep -qE '^GRUB_CMDLINE_LINUX_DEFAULT=.*\bquiet\b' /etc/default/grub ||
+      { sed -i -E 's/^(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*)"/\1 quiet"/' /etc/default/grub; bs_mark_quiet /etc/default/grub; }
+    grep -qE '^GRUB_CMDLINE_LINUX_DEFAULT=.*\bsplash\b' /etc/default/grub ||
+      sed -i -E 's/^(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*)"/\1 splash"/' /etc/default/grub
+    grub-mkconfig -o /boot/grub/grub.cfg >/dev/null
+  fi
+}
+
+bs_remove_params() {
+  local f
+  while read -r f; do
+    [[ -n "$f" ]] || continue
+    sed -i -E '/^options/ s/ splash\b//g' "$f"
+    bs_we_added_quiet "$f" && sed -i -E '/^options/ s/ quiet\b//g' "$f"
+  done < <(boot_entries)
+  if [[ -f /etc/kernel/cmdline ]]; then
+    sed -i -E 's/ splash\b//g' /etc/kernel/cmdline
+    bs_we_added_quiet /etc/kernel/cmdline && sed -i -E 's/ quiet\b//g' /etc/kernel/cmdline
+  fi
+  if [[ -f /etc/default/grub ]] && have grub-mkconfig; then
+    sed -i -E '/^GRUB_CMDLINE_LINUX_DEFAULT=/ s/ splash\b//g' /etc/default/grub
+    bs_we_added_quiet /etc/default/grub && sed -i -E '/^GRUB_CMDLINE_LINUX_DEFAULT=/ s/ quiet\b//g' /etc/default/grub
+    grub-mkconfig -o /boot/grub/grub.cfg >/dev/null
+  fi
+  rm -f "$BS_STATE"
+}
+
+bs_status() {
+  if [[ -f /usr/share/plymouth/themes/exarch/exarch.plymouth ]]; then row "$OK" theme "installed"
+  else row "$NO" theme "not installed"; fi
+  if grep -qE '^HOOKS=.*\bplymouth\b' "$MKINIT" 2>/dev/null; then row "$OK" initramfs "plymouth hook present"
+  else row "$NO" initramfs "no plymouth hook"; fi
+  if grep -qw splash /proc/cmdline 2>/dev/null; then row "$OK" "this boot" "booted with splash"
+  else row "$NO" "this boot" "no splash on the kernel command line"; fi
+}
+
+cmd_bootsplash() {
+  local sub="${1:-status}"
+  case "$sub" in
+    status) printf '\n  %sBoot splash%s\n\n' "$B$V" "$N"; bs_status; echo ;;
+    on)
+      as_root bootsplash on
+      is_live && die "not on the live ISO"
+      [[ -f "$MKINIT" ]] || die "$MKINIT not found"
+      pacman -S --needed --noconfirm plymouth || die "couldn't install plymouth"
+      install -d /usr/share/plymouth/themes/exarch
+      install -m644 "$DATA"/branding/plymouth/* /usr/share/plymouth/themes/exarch/
+      plymouth-set-default-theme exarch
+      bs_backup "$MKINIT"
+      # after udev/systemd, before encrypt/sd-encrypt so the unlock prompt is themed
+      if ! grep -qE '^HOOKS=.*\bplymouth\b' "$MKINIT"; then
+        sed -i -E '/^HOOKS=/ s/\b(systemd|udev)\b/\1 plymouth/' "$MKINIT"
+        grep -qE '^HOOKS=.*\bplymouth\b' "$MKINIT" || die "couldn't add the plymouth hook (no udev/systemd in HOOKS?)"
+      fi
+      bs_add_params
+      log "Rebuilding the initramfs"
+      mkinitcpio -P || die "mkinitcpio failed: undo with  sudo exarch bootsplash off"
+      log "Boot splash on. Reboot to see it. (Esc during boot shows the text log.)" ;;
+    off)
+      as_root bootsplash off
+      [[ -f "$MKINIT" ]] && sed -i -E '/^HOOKS=/ s/ plymouth\b//' "$MKINIT"
+      bs_remove_params
+      mkinitcpio -P || die "mkinitcpio failed"
+      log "Boot splash off (plymouth stays installed: sudo pacman -Rns plymouth to remove it)." ;;
+    *) die "unknown: exarch bootsplash $sub (on, off, status)" ;;
+  esac
+}
+
+# =============================================================================
+# clean: reclaim disk space without breaking rollbacks
+# =============================================================================
+cmd_clean() {
+  have pacman || die "pacman not found"
+  local before after orphans
+  before="$(df --output=avail -k / | tail -n1)"
+  log "Package cache: keeping the last 2 versions of installed packages (driver rollback still works)"
+  if have paccache; then
+    sudo paccache -rk2 -q
+    sudo paccache -ruk0 -q                                  # uninstalled packages: none
+  fi
+  orphans="$(pacman -Qdtq 2>/dev/null)"
+  if [[ -n "$orphans" ]]; then
+    printf '  %sUnused dependencies:%s %s\n' "$D" "$N" "$(tr '\n' ' ' <<<"$orphans")"
+    if confirm "Remove them?"; then
+      # shellcheck disable=SC2086
+      sudo pacman -Rns --noconfirm $orphans
+    fi
+  fi
+  log "Journal: trimming to 200 MB"
+  sudo journalctl --vacuum-size=200M -q
+  have paru && { log "AUR build cache"; paru -Sc --noconfirm >/dev/null 2>&1; }
+  rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/thumbnails" 2>/dev/null
+  have flatpak && flatpak uninstall --unused -y >/dev/null 2>&1
+  after="$(df --output=avail -k / | tail -n1)"
+  log "Freed $(human_kb $(( after > before ? after - before : 0 )))."
+}
+
+# =============================================================================
+# update: read the news first, then upgrade, then report what needs a human
+# =============================================================================
+last_upgrade_epoch() {
+  local line
+  line="$(grep -a 'starting full system upgrade' /var/log/pacman.log 2>/dev/null | tail -n1)"
+  [[ -n "$line" ]] || { echo 0; return; }
+  date -d "$(sed -E 's/^\[([^]]+)\].*/\1/' <<<"$line")" +%s 2>/dev/null || echo 0
+}
+
+# Arch news posted since the last full upgrade (these are the "manual intervention" posts)
+arch_news_since() {
+  local since="$1" xml
+  have curl || return 0
+  xml="$(curl -fsS --max-time 8 https://archlinux.org/feeds/news/ 2>/dev/null)" || { warn "couldn't fetch Arch news (offline?)"; return 0; }
+  # one item per line: epoch<TAB>title<TAB>link
+  tr -d '\n' <<<"$xml" | sed 's#<item>#\n<item>#g' | grep '^<item>' | while IFS= read -r item; do
+    local title link pub epoch
+    title="$(sed -E 's#.*<title>([^<]*)</title>.*#\1#' <<<"$item" | sed 's/&amp;/\&/g; s/&lt;/</g; s/&gt;/>/g')"
+    link="$(sed -E 's#.*<link>([^<]*)</link>.*#\1#' <<<"$item")"
+    pub="$(sed -E 's#.*<pubDate>([^<]*)</pubDate>.*#\1#' <<<"$item")"
+    epoch="$(date -d "$pub" +%s 2>/dev/null || echo 0)"
+    (( epoch > since )) && printf '%s\t%s\t%s\n' "$epoch" "$title" "$link"
+  done
+}
+
+pacnew_files() { find /etc -xdev \( -name '*.pacnew' -o -name '*.pacsave' \) 2>/dev/null; }
+
+reboot_pending() { [[ ! -d "/usr/lib/modules/$(uname -r)" ]]; }
+
+cmd_update() {
+  have pacman || die "pacman not found"
+  is_live && warn "Live ISO: updates go to RAM and are lost at reboot."
+  local since news
+  since="$(last_upgrade_epoch)"
+  log "Checking Arch news since your last upgrade..."
+  news="$(arch_news_since "$since")"
+  if [[ -n "$news" ]]; then
+    printf '\n  %sArch news since your last upgrade%s (read these, some need manual steps):\n\n' "$B$Y" "$N"
+    while IFS=$'\t' read -r epoch title link; do
+      printf '  %s%s%s  %s\n    %s%s%s\n' "$D" "$(date -d "@$epoch" +%F)" "$N" "$title" "$D" "$link" "$N"
+    done <<<"$news"
+    echo
+    confirm "Read them? Continue with the upgrade?" || { log "Stopped. Nothing changed."; return 0; }
+  else
+    log "No news since your last upgrade."
+  fi
+
+  local pinned; pinned="$(pinned_pkgs | tr '\n' ' ')"
+  [[ -n "${pinned// /}" ]] && log "Held back by IgnorePkg: $pinned"
+  pkg_installed snap-pac && log "snap-pac takes a btrfs snapshot before and after this."
+
+  sudo pacman -Syu || die "pacman -Syu failed (nothing after this ran)"
+  if have paru; then
+    log "AUR updates"
+    paru -Sua || warn "some AUR updates failed"
+  fi
+  have flatpak && flatpak update -y >/dev/null 2>&1
+
+  echo
+  local f line; f="$(pacnew_files)"
+  if [[ -n "$f" ]]; then
+    warn "Config files to merge (sudo pacdiff):"
+    while read -r line; do printf '    %s\n' "$line" >&2; done <<<"$f"
+  fi
+  local failed; failed="$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | tr '\n' ' ')"
+  [[ -n "${failed// /}" ]] && warn "Failed services: $failed(systemctl status NAME)"
+  if reboot_pending; then
+    warn "The kernel was updated: reboot to use it (and the matching NVIDIA module)."
+  else
+    log "Up to date. No reboot needed."
+  fi
+}
+
+# =============================================================================
+# doctor: one screen of "is this machine healthy"
+# =============================================================================
+human_kb() { awk -v k="$1" 'BEGIN { if (k > 1048576) printf "%.1f GiB", k/1048576; else printf "%.0f MiB", k/1024 }'; }
+
+cmd_doctor() {
+  load_installed
+  printf '\n  %sE X A R C H%s  %sdoctor%s\n' "$B$V" "$N" "$D" "$N"
+
+  section "Services"
+  local failed; failed="$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}')"
+  if [[ -z "$failed" ]]; then row "$OK" system "no failed services"
+  else row "$BAD" system "failed: $(tr '\n' ' ' <<<"$failed")"; fi
+  local ufailed; ufailed="$(systemctl --user --failed --no-legend --plain 2>/dev/null | awk '{print $1}')"
+  if [[ -z "$ufailed" ]]; then row "$OK" user "no failed user services"
+  else row "$BAD" user "failed: $(tr '\n' ' ' <<<"$ufailed")"; fi
+  local errs; errs="$(journalctl -b -p 3 -q --no-pager 2>/dev/null | wc -l)"
+  if (( errs == 0 )); then row "$OK" journal "no errors this boot"
+  else row "$WARN" journal "$errs error lines this boot (journalctl -b -p 3)"; fi
+
+  section "Memory"
+  local total avail swap_used
+  total="$(awk '/MemTotal/ {print $2}' /proc/meminfo)"; avail="$(awk '/MemAvailable/ {print $2}' /proc/meminfo)"
+  row "$NO" ram "$(human_kb $((total - avail))) used of $(human_kb "$total")"
+  if [[ -e /sys/block/zram0 ]] && grep -q zram0 /proc/swaps 2>/dev/null; then
+    swap_used="$(awk '/zram0/ {print $4}' /proc/swaps)"
+    row "$OK" zram "compressed swap in RAM ($(human_kb "${swap_used:-0}") used)"
+  else
+    row "$WARN" zram "off (sudo exarch-setup re-run sets it up)"
+  fi
+  if systemctl is-active -q systemd-oomd 2>/dev/null; then row "$OK" oomd "kills runaway apps before the desktop freezes"
+  else row "$WARN" oomd "systemd-oomd not running"; fi
+  printf '  %s %sbiggest%s\n' "$NO" "$D" "$N"
+  ps -eo rss=,comm= --sort=-rss 2>/dev/null | head -n 5 | while read -r rss comm; do
+    printf '      %-10s %s\n' "$(human_kb "$rss")" "$comm"
+  done
+
+  section "Disk"
+  local mp use
+  for mp in / /boot /efi /home; do
+    mountpoint -q "$mp" 2>/dev/null || [[ "$mp" == / ]] || continue
+    use="$(df --output=pcent "$mp" 2>/dev/null | tail -n1 | tr -dc '0-9')"
+    [[ -n "$use" ]] || continue
+    if (( use >= 90 )); then row "$BAD" "$mp" "${use}% full"
+    elif (( use >= 75 )); then row "$WARN" "$mp" "${use}% full"
+    else row "$OK" "$mp" "${use}% full"; fi
+  done
+  if have snapper && [[ -f /etc/snapper/configs/root ]]; then
+    local n; n="$(sudo -n snapper -c root list 2>/dev/null | tail -n +3 | wc -l)"
+    if (( n > 0 )); then row "$OK" snapshots "$n btrfs snapshots of /"; else row "$OK" snapshots "snapper configured"; fi
+  fi
+  local cache; cache="$(du -sh /var/cache/pacman/pkg 2>/dev/null | cut -f1)"
+  [[ -n "$cache" ]] && row "$NO" "pkg cache" "$cache (paccache keeps the last 3 versions, for rollbacks)"
+
+  section "Packages"
+  local since days
+  since="$(last_upgrade_epoch)"
+  if (( since > 0 )); then
+    days=$(( ($(date +%s) - since) / 86400 ))
+    if (( days > 14 )); then row "$WARN" updated "$days days ago (exarch update)"
+    else row "$OK" updated "$days days ago"; fi
+  fi
+  local pn; pn="$(pacnew_files | wc -l)"
+  if (( pn == 0 )); then row "$OK" pacnew "no config files waiting to merge"
+  else row "$WARN" pacnew "$pn config files to merge (sudo pacdiff)"; fi
+  local orphans; orphans="$(pacman -Qdtq 2>/dev/null | wc -l)"
+  if (( orphans == 0 )); then row "$OK" orphans "none"
+  else row "$NO" orphans "$orphans unused dependencies (pacman -Qdtq; remove with sudo pacman -Rns \$(pacman -Qdtq))"; fi
+  if reboot_pending; then row "$WARN" reboot "kernel was updated: reboot to use it"
+  else row "$OK" reboot "not needed"; fi
+  if [[ -n "$(nvidia_card)" ]]; then driver_summary_rows; fi
+  echo
+}
+
+welcome_status_line() {
+  local sb fw tools avail total gpu=""
+  case "$(secure_boot_state)" in on) sb="${G}on${N}" ;; setup) sb="${Y}setup mode${N}" ;; *) sb="${D}off${N}" ;; esac
+  if systemctl is-active -q ufw 2>/dev/null; then fw="${G}on${N}"; else fw="${Y}off${N}"; fi
+  read -r avail total < <(tool_counts)
+  tools="$avail/$total"
+  if [[ -n "$(nvidia_card)" ]]; then
+    local loaded; loaded="$(cat /sys/module/nvidia/version 2>/dev/null)"
+    gpu="   ${D}nvidia${N} ${loaded:-${Y}not loaded${N}}"
+  fi
+  printf '  %ssecure boot%s %s   %sfirewall%s %s   %stools%s %s%s\n' \
+    "$D" "$N" "$sb" "$D" "$N" "$fw" "$D" "$N" "$tools" "$gpu"
+}
+
+welcome_screen() {
+  clear
+  echo
+  if have_splash && [[ -n "$V" ]]; then
+    run_splash --static --no-info
+    echo
+  else
+    render_logo
+    printf '\n  %sE X A R C H%s   %s// DEFEND · ATTACK · AUTOMATE%s\n\n' "$B$V" "$N" "$D" "$N"
+  fi
+  welcome_status_line
+  if is_live; then
+    printf '\n  %sLive system%s\n' "$B$V" "$N"
+    printf '  1. Wi-Fi: %snmtui%s   2. Install: %sarchinstall%s (systemd-boot, btrfs)\n' "$B" "$N" "$B" "$N"
+    printf '  3. Reboot, then: %sgit clone https://github.com/delusionaIs/%s && sudo bash ./%s/install.sh%s\n' "$B" "$DISTRO_ID" "$DISTRO_ID" "$N"
+  fi
+  printf '\n  %sKeys%s  %sSuper+Enter%s terminal  %sSuper+D%s launcher  %sSuper+O%s overview  %sSuper+Shift+/%s all keys\n' \
+    "$B$V" "$N" "$B" "$N" "$B" "$N" "$B" "$N" "$B" "$N"
+  interactive || return 0
+  printf '\n  %s[t]%s tools   %s[p]%s packs   %s[s]%s status   %s[d]%s driver   %s[q]%s close\n' \
+    "$B$V" "$N" "$B$V" "$N" "$B$V" "$N" "$B$V" "$N" "$B$V" "$N"
+  printf '\n  %sLater: run %sexarch%s in any terminal.%s\n' "$D" "$N$B" "$N$D" "$N"
+}
+
+cmd_welcome() {
+  if ! interactive; then
+    welcome_screen
+    return 0
+  fi
+  local key
+  while true; do
+    welcome_screen
+    read -rsn1 key || break
+    case "$key" in
+      t|T) cmd_tools ;;
+      p|P) clear; packs_list
+           local p; read -rp "  Install packs (e.g. cloud,web; empty to go back): " p
+           [[ -n "$p" ]] && { packs_install "$p"; pause; } ;;
+      s|S) clear; cmd_status; pause ;;
+      d|D) clear; ( cmd_driver status ); pause ;;
+      q|Q|$'\e'|"") clear; break ;;
+    esac
+  done
+}
+
+# =============================================================================
+usage() {
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$SELF"
+}
+
+main() {
+  local cmd="${1:-}"; shift || true
+  case "$cmd" in
+    "") if interactive; then cmd_welcome; else usage; fi ;;
+    status|st) cmd_status ;;
+    tools|t) cmd_tools "$@" ;;
+    packs|pack|p) cmd_packs "$@" ;;
+    driver|drv) cmd_driver "$@" ;;
+    menu) cmd_menu "$@" ;;
+    welcome) cmd_welcome ;;
+    splash) cmd_splash "$@" ;;
+    wallpaper|wall) cmd_wallpaper "$@" ;;
+    update|up) cmd_update ;;
+    clean) cmd_clean ;;
+    bootsplash|splashscreen) cmd_bootsplash "$@" ;;
+    doctor|doc) cmd_doctor ;;
+    version|--version|-V) echo "exarch $EXARCH_CMD_VERSION ($DISTRO_NAME, data: $DATA)" ;;
+    help|-h|--help) usage ;;
+    __preview) tool_preview "$1" ;;
+    __open) tool_open "$1" ;;
+    __run) tool_run "$1" ;;
+    __wallpreview) wall_preview "$@" ;;
+    *) echo "exarch: unknown command '$cmd'" >&2; usage >&2; exit 1 ;;
+  esac
+}
+
+main "$@"

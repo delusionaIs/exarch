@@ -1,0 +1,4 @@
+# AUR, installed by exarch-setup on the installed system (default).
+# Animated wallpapers for niri (`exarch wallpaper`): Exarch's shader
+# wallpapers and any video file. Pauses itself while windows hide it.
+mpvpaper

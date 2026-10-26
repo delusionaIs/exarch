@@ -1,0 +1,19 @@
+# AUR packages built in CI into a local repo and put on the ISO
+# (scripts/build-aur-repo.sh). On an installed system exarch-setup builds them
+# with paru. Failures are skipped, never fatal. Keep this list short and
+# review PKGBUILD changes: building AUR code in CI is a supply-chain surface.
+
+# Desktop shell for niri (Quickshell-based, MIT, lavender default)
+noctalia-shell
+
+# bash: fish-style autosuggestions + syntax highlighting (ble.sh)
+blesh-git
+
+# Scanners not in the official repos
+grype-bin
+kube-bench-bin
+kubescape
+conftest-bin
+hadolint-bin
+opengrep
+trufflehog

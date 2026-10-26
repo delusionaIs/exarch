@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Starts the right desktop session.
+#   live ISO:   greetd's initial_session runs this; the boot entry decides
+#               (exarch.safe on the kernel command line -> Plasma).
+#   installed:  pick "niri" or "Plasma" in the greeter instead.
+
+# GPU-specific environment written by exarch-gpu-detect (live) or
+# exarch-setup (installed), e.g. NVIDIA VA-API/GLX variables.
+for env in /run/exarch/gpu.env /etc/exarch/gpu.env; do
+  if [[ -f "$env" ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    . "$env"
+    set +a
+    break
+  fi
+done
+
+session="${1:-}"
+[[ -z "$session" && -f /run/exarch/session ]] && session="$(cat /run/exarch/session)"
+[[ -z "$session" ]] && session=niri
+
+case "$session" in
+  plasma)
+    if [[ -x /usr/lib/plasma-dbus-run-session-if-needed ]]; then
+      exec /usr/lib/plasma-dbus-run-session-if-needed /usr/bin/startplasma-wayland
+    fi
+    exec dbus-run-session startplasma-wayland
+    ;;
+  *)
+    exec niri-session
+    ;;
+esac

@@ -1,0 +1,4 @@
+# Tier 1 (optional): runtime security / observability CLIs.
+# sudo exarch-setup --packs-only --packs runtime  (Prometheus/Grafana/Loki run as lab containers)
+falco
+tetragon

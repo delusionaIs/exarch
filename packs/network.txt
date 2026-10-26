@@ -1,0 +1,5 @@
+# Tier 1 (optional): network analysis. sudo exarch-setup --packs-only --packs network
+wireshark-qt
+bettercap
+responder
+netexec

@@ -1,0 +1,6 @@
+# NOT open source. Never installed by default.
+# sudo exarch-setup --packs-only --packs nonfree --accept-nonfree
+terraform   # BUSL-1.1
+vault       # BUSL-1.1
+packer      # BUSL-1.1
+burpsuite   # proprietary freeware (BlackArch)

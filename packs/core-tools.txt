@@ -1,0 +1,74 @@
+# BEST-EFFORT, goes on the ISO: Tier 0 DevSecOps toolkit (all FOSS).
+# Names missing from the repos are dropped at build time with a warning
+# instead of failing the build. AUR-only tools live in aur-core.txt.
+
+# Containers
+podman
+buildah
+skopeo
+docker
+docker-buildx
+docker-compose
+dive
+lazydocker
+
+# Kubernetes
+kubectl
+helm
+k9s
+kind
+k3d
+minikube
+kubectx
+kustomize
+stern
+
+# Infra as code (OpenTofu, not BUSL Terraform)
+opentofu
+ansible
+ansible-lint
+tflint
+
+# Scanners: images, IaC, deps, secrets
+trivy
+checkov
+syft
+osv-scanner
+gitleaks
+bandit
+shellcheck
+
+# Supply chain
+cosign
+rekor-cli
+slsa-verifier
+
+# Policy as code
+open-policy-agent
+
+# CI/CD local
+act
+
+# Secrets (OpenBao, not BUSL Vault)
+openbao
+sops
+age
+
+# Network basics
+nmap
+tcpdump
+masscan
+whois
+bind
+mtr
+httpie
+openbsd-netcat
+
+# Desktop extra: image/GIF wallpapers with transitions (was swww, renamed awww)
+awww
+
+# Web basics
+ffuf
+sqlmap
+nikto
+nuclei

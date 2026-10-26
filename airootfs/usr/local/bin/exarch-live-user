@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Live ISO only: create a passwordless sudo user so SDDM can autologin.
+# Never runs on an installed system (the service only exists on the ISO).
+set -euo pipefail
+user=exarch
+
+id "$user" &>/dev/null && exit 0
+useradd -m -G wheel,video,audio,network -s /bin/bash "$user"
+passwd -d "$user"
+install -m 440 /dev/stdin /etc/sudoers.d/10-exarch-live <<<"$user ALL=(ALL) NOPASSWD: ALL"

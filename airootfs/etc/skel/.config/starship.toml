@@ -1,0 +1,99 @@
+# Exarch prompt
+#   ┌─user@host ~/dir  main ✚  ⎈ kind-lab                    ✗ 1  12s  14:02
+#   └─▶
+add_newline = true
+
+format = """
+[┌─](bold #9a5cff)$username[@](#6a6a70)$hostname $directory$git_branch$git_state$git_status$kubernetes$python$golang$nodejs$rust$container
+[└─](bold #9a5cff)$character"""
+
+right_format = "$status$cmd_duration$jobs$time"
+
+[character]
+success_symbol = "[▶](bold #9a5cff)"
+error_symbol = "[▶](bold #ff4d6d)"
+vimcmd_symbol = "[◀](bold #5be3a0)"
+
+[username]
+show_always = true
+style_user = "bold #9a5cff"
+style_root = "bold white on #4b1a99"
+format = "[$user]($style)"
+
+[hostname]
+ssh_only = false
+ssh_symbol = "  "
+style = "#9a9aa2"
+format = "[$hostname$ssh_symbol]($style)"
+
+[directory]
+style = "bold #dedee2"
+read_only = " 󰌾"
+read_only_style = "#ff4d6d"
+truncation_length = 4
+truncation_symbol = "…/"
+
+[git_branch]
+symbol = " "
+style = "#9a5cff"
+format = " [$symbol$branch]($style)"
+
+[git_state]
+style = "bold #ffcf5c"
+
+[git_status]
+style = "#c8a0ff"
+format = "[ $all_status$ahead_behind]($style)"
+
+[kubernetes]
+disabled = false
+symbol = "⎈ "
+style = "#7a2fe0"
+format = " [$symbol$context]($style)"
+
+[python]
+symbol = " "
+style = "#ffcf5c"
+format = " [$symbol$version(\\($virtualenv\\))]($style)"
+
+[golang]
+symbol = " "
+style = "#4dd9ff"
+format = " [$symbol$version]($style)"
+
+[nodejs]
+symbol = " "
+style = "#5be3a0"
+format = " [$symbol$version]($style)"
+
+[rust]
+symbol = " "
+style = "#ff7a90"
+format = " [$symbol$version]($style)"
+
+[container]
+symbol = "⬢ "
+style = "#c8a0ff"
+format = " [$symbol$name]($style)"
+
+[status]
+disabled = false
+symbol = "✗ "
+style = "bold #ff4d6d"
+format = "[$symbol$status]($style) "
+
+[cmd_duration]
+min_time = 2000
+style = "#ffcf5c"
+format = "[ $duration]($style) "
+
+[jobs]
+symbol = "✦"
+style = "#c8a0ff"
+format = "[$symbol$number]($style) "
+
+[time]
+disabled = false
+style = "#4a4458"
+format = "[$time]($style)"
+time_format = "%H:%M"

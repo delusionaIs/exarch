@@ -1,0 +1,26 @@
+image=/usr/share/exarch/branding/wallpaper-1080p.png
+scaling=fill
+color=000000
+indicator-radius=90
+indicator-thickness=8
+inside-color=0a0910cc
+inside-clear-color=0a0910cc
+inside-ver-color=0a0910cc
+inside-wrong-color=0a0910cc
+ring-color=5a28aa
+ring-ver-color=9a5cff
+ring-clear-color=c8a0ff
+ring-wrong-color=ff4d6d
+key-hl-color=c8a0ff
+bs-hl-color=ff4d6d
+line-color=00000000
+line-ver-color=00000000
+line-clear-color=00000000
+line-wrong-color=00000000
+separator-color=00000000
+text-color=dedee2
+text-ver-color=dedee2
+text-wrong-color=ff4d6d
+text-clear-color=dedee2
+font=JetBrainsMono Nerd Font
+show-failed-attempts

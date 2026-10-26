@@ -1,0 +1,351 @@
+#!/usr/bin/env bash
+# Turn a fresh Arch install (from archinstall) into Exarch.
+#
+#   sudo ./install.sh                          # full setup, default packs
+#   sudo ./install.sh --packs cloud,web        # full setup + extra packs
+#   sudo ./install.sh --no-harden              # skip firewall/sysctl/apparmor
+#   sudo ./install.sh --no-nvidia              # skip NVIDIA driver setup
+#   sudo ./install.sh --secure-boot            # only Secure Boot setup (sbctl)
+#   exarch-setup --packs-only --packs web      # only install extra packs
+#                                              # (or: exarch packs install web)
+#
+# Default packs: desktop, base, core-tools, aur-core, aur-wallpaper. Packs live in packs/*.txt.
+# The nonfree pack additionally needs --accept-nonfree. Safe to re-run.
+set -euo pipefail
+
+DATA="${EXARCH_DATA:-/usr/share/exarch}"
+DEFAULT_PACKS="desktop,base,core-tools,aur-core,aur-wallpaper"
+EXTRA_PACKS=""
+HARDEN=1
+NVIDIA=1
+SECURE_BOOT_ONLY=0
+PACKS_ONLY=0
+ACCEPT_NONFREE=0
+
+while (( $# )); do
+  case "$1" in
+    --packs) EXTRA_PACKS="$2"; shift 2 ;;
+    --packs-only) PACKS_ONLY=1; shift ;;
+    --no-harden) HARDEN=0; shift ;;
+    --no-nvidia) NVIDIA=0; shift ;;
+    --secure-boot) SECURE_BOOT_ONLY=1; shift ;;
+    --accept-nonfree) ACCEPT_NONFREE=1; shift ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    *) echo "unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+log()  { printf '\e[1;35m[exarch]\e[0m %s\n' "$*"; }
+warn() { printf '\e[1;33m[exarch]\e[0m %s\n' "$*" >&2; }
+clean_list() { sed 's/#.*//; s/[[:space:]]//g; /^$/d' "$@"; }
+
+[[ $EUID -eq 0 ]] || { echo "run with sudo" >&2; exit 1; }
+[[ -d "$DATA/packs" ]] || { echo "data not found at $DATA (set EXARCH_DATA)" >&2; exit 1; }
+USER_NAME="${SUDO_USER:-}"
+[[ -n "$USER_NAME" && "$USER_NAME" != root ]] || { echo "run via sudo from your normal user" >&2; exit 1; }
+USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
+
+# --- Secure Boot (opt-in, standalone) -------------------------------------------
+# Own keys via sbctl, Microsoft keys kept (-m) so Windows, the NVIDIA GPU's
+# firmware and other option ROMs still boot. Supports systemd-boot (archinstall's
+# default on UEFI). Firmware must be in Setup Mode first.
+if (( SECURE_BOOT_ONLY )); then
+  [[ -d /sys/firmware/efi ]] || { echo "not booted in UEFI mode" >&2; exit 1; }
+  if [[ ! -d /boot/loader ]] && [[ ! -d /efi/loader ]]; then
+    warn "systemd-boot not found. This only supports systemd-boot (pick it in archinstall)."
+    warn "For GRUB see: https://wiki.archlinux.org/title/Unified_Extensible_Firmware_Interface/Secure_Boot"
+    exit 1
+  fi
+  pacman -S --needed --noconfirm sbctl jq
+
+  if [[ "$(sbctl status --json | jq -r '.secure_boot')" == true ]]; then
+    log "Secure Boot is already on with enrolled keys:"
+    sbctl status
+    exit 0
+  fi
+  if [[ "$(sbctl status --json | jq -r '.setup_mode')" != true ]]; then
+    warn "Firmware is NOT in Setup Mode. Do this, then re-run:"
+    warn "  1. Reboot into BIOS/UEFI settings"
+    warn "  2. Secure Boot -> 'Reset to Setup Mode' / 'Clear Secure Boot keys'"
+    warn "     (NOT 'restore factory keys'). Leave Secure Boot itself OFF for now."
+    warn "  3. Save, boot Exarch, run: sudo exarch-setup --secure-boot"
+    exit 1
+  fi
+
+  log "Creating keys and enrolling them (Microsoft keys kept)"
+  [[ -d /var/lib/sbctl/keys ]] || [[ -d /usr/share/secureboot/keys ]] || sbctl create-keys
+  sbctl enroll-keys -m
+
+  log "Signing bootloader and kernels"
+  while read -r f; do
+    sbctl sign -s "$f"
+  done < <(sbctl verify 2>/dev/null | awk '/is not signed/ {print $2}')
+  sbctl verify
+
+  log "Done. sbctl's pacman hook re-signs kernels on every update."
+  log "Now: reboot -> BIOS -> turn Secure Boot ON -> boot Exarch and check: sbctl status"
+  warn "Have your BitLocker recovery key ready before booting Windows the first time."
+  exit 0
+fi
+
+# --- repos --------------------------------------------------------------------
+if grep -q '^#\[multilib\]' /etc/pacman.conf; then
+  log "Enabling multilib"
+  sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
+fi
+log "Enabling BlackArch repo"
+bash "$DATA/scripts/setup-blackarch-keyring.sh"
+pacman -Syu --noconfirm
+
+# --- packs --------------------------------------------------------------------
+ensure_paru() {
+  command -v paru &>/dev/null && return 0
+  log "Bootstrapping paru (AUR helper)"
+  sudo -u "$USER_NAME" bash -c '
+    set -e; d=$(mktemp -d); cd "$d"
+    git clone --depth 1 https://aur.archlinux.org/paru-bin.git
+    cd paru-bin && makepkg -si --noconfirm'
+}
+
+install_pack() {
+  local pack="$1" file="$DATA/packs/$1.txt" p
+  [[ -f "$file" ]] || { warn "no such pack: $pack (see /usr/share/exarch/packs/)"; return 0; }
+  local want=()
+  mapfile -t want < <(clean_list "$file")
+  (( ${#want[@]} )) || return 0
+
+  if [[ "$pack" == nonfree ]] && (( ! ACCEPT_NONFREE )); then
+    warn "The nonfree pack is NOT open source (BUSL-1.1 / proprietary): ${want[*]}"
+    warn "Re-run with --accept-nonfree if you accept those licenses."
+    return 0
+  fi
+
+  if [[ "$pack" == aur-* ]]; then
+    ensure_paru
+    log "Installing AUR pack: $pack"
+    for p in "${want[@]}"; do
+      sudo -u "$USER_NAME" paru -S --needed --noconfirm "$p" || warn "AUR: $p failed, skipped"
+    done
+    return 0
+  fi
+
+  local ok=() missing=()
+  for p in "${want[@]}"; do
+    if pacman -Si "$p" &>/dev/null || pacman -Sg "$p" &>/dev/null; then ok+=("$p"); else missing+=("$p"); fi
+  done
+  if (( ${#missing[@]} )); then
+    warn "pack $pack: not in the repos, skipped: ${missing[*]}"
+  fi
+  if (( ${#ok[@]} )); then
+    log "Installing pack: $pack (${#ok[@]} packages)"
+    pacman -S --needed --noconfirm "${ok[@]}"
+  fi
+}
+
+if (( PACKS_ONLY )); then
+  IFS=',' read -ra pack_list <<<"$EXTRA_PACKS"
+  for pack in "${pack_list[@]}"; do install_pack "$pack"; done
+  log "Done."
+  exit 0
+fi
+
+PACKS="$DEFAULT_PACKS${EXTRA_PACKS:+,$EXTRA_PACKS}"
+IFS=',' read -ra pack_list <<<"$PACKS"
+for pack in "${pack_list[@]}"; do install_pack "$pack"; done
+
+# --- Exarch files -------------------------------------------------------------
+log "Installing Exarch files"
+if [[ "$(realpath "$DATA")" != /usr/share/exarch ]]; then
+  rm -rf /usr/share/exarch
+  install -d /usr/share/exarch
+  cp -a "$DATA/branding" "$DATA/packs" "$DATA/airootfs" "$DATA/scripts" "$DATA/config" "$DATA/rust" "$DATA/wallpapers" /usr/share/exarch/
+  rm -rf /usr/share/exarch/rust/exarch-splash/target
+  rm -rf /usr/share/exarch/branding/explorations
+fi
+for f in "$DATA"/airootfs/usr/local/bin/*; do
+  case "$(basename "$f")" in exarch-live-user|exarch-gpu-detect) continue ;; esac
+  install -Dm755 "$f" "/usr/local/bin/$(basename "$f")"
+done
+install -Dm644 "$DATA/airootfs/usr/share/color-schemes/Exarch.colors" /usr/share/color-schemes/Exarch.colors
+install -Dm644 "$DATA/airootfs/usr/local/lib/exarch/splash.py" /usr/local/lib/exarch/splash.py
+install -Dm644 "$DATA/airootfs/usr/share/bash-completion/completions/exarch" \
+  /usr/share/bash-completion/completions/exarch
+install -Dm644 "$DATA/airootfs/etc/motd" /etc/motd 2>/dev/null || true
+
+# --- exarch-splash (Rust): the 3D logo for terminals and the live wallpaper ----
+# No crate dependencies, so after the toolchain is there it builds offline.
+build_splash() {
+  local src="$DATA/rust/exarch-splash" target
+  [[ -f "$src/Cargo.toml" ]] || return 0
+  if ! sudo -u "$USER_NAME" bash -lc 'cargo --version' &>/dev/null; then
+    if sudo -u "$USER_NAME" bash -lc 'command -v rustup' &>/dev/null; then
+      log "Rust: installing the stable toolchain for $USER_NAME (rustup, minimal profile)"
+      sudo -u "$USER_NAME" bash -lc 'rustup toolchain install stable --profile minimal && rustup default stable' ||
+        { warn "rustup failed: the splash uses the Python fallback"; return 0; }
+    else
+      warn "no Rust toolchain: the splash uses the Python fallback"; return 0
+    fi
+  fi
+  target="$(sudo -u "$USER_NAME" mktemp -d)"
+  log "Building exarch-splash (Rust)"
+  if sudo -u "$USER_NAME" bash -lc "cargo build --release --locked --offline --manifest-path '$src/Cargo.toml' --target-dir '$target'" ||
+     sudo -u "$USER_NAME" bash -lc "cargo build --release --manifest-path '$src/Cargo.toml' --target-dir '$target'"; then
+    install -Dm755 "$target/release/exarch-splash" /usr/local/bin/exarch-splash
+  else
+    warn "exarch-splash didn't build: the splash uses the Python fallback"
+  fi
+  rm -rf "$target"
+}
+build_splash
+
+# --- stability: zram swap, OOM protection, TRIM, cache and log limits ---------
+log "Stability: zram swap, systemd-oomd, weekly TRIM, package cache + journal limits"
+install -Dm644 "$DATA/airootfs/etc/systemd/zram-generator.conf" /etc/systemd/zram-generator.conf
+install -Dm644 "$DATA/airootfs/etc/sysctl.d/91-exarch-zram.conf" /etc/sysctl.d/91-exarch-zram.conf
+install -Dm644 "$DATA/airootfs/etc/systemd/system/-.slice.d/10-exarch-oomd.conf" "/etc/systemd/system/-.slice.d/10-exarch-oomd.conf"
+install -Dm644 "$DATA/airootfs/etc/systemd/system/user@.service.d/10-exarch-oomd.conf" "/etc/systemd/system/user@.service.d/10-exarch-oomd.conf"
+install -Dm644 "$DATA/airootfs/etc/systemd/journald.conf.d/10-exarch.conf" /etc/systemd/journald.conf.d/10-exarch.conf
+systemctl daemon-reload
+if pacman -Q zram-generator &>/dev/null; then
+  systemctl start systemd-zram-setup@zram0.service 2>/dev/null || true
+fi
+sysctl -p /etc/sysctl.d/91-exarch-zram.conf >/dev/null 2>&1 || true
+systemctl enable --now systemd-oomd.service 2>/dev/null || warn "systemd-oomd couldn't start"
+systemctl enable fstrim.timer 2>/dev/null || true
+pacman -Q pacman-contrib &>/dev/null && systemctl enable paccache.timer   # keeps 3 versions: rollbacks still work
+
+# Dotfiles: into skel (new users) and the current user, never overwriting...
+cp -an "$DATA/airootfs/etc/skel/." /etc/skel/
+sudo -u "$USER_NAME" cp -an "$DATA/airootfs/etc/skel/." "$USER_HOME/"
+sudo -u "$USER_NAME" mkdir -p "$USER_HOME/Pictures/Screenshots"
+
+# ...except the bash files: archinstall already created stock ones, so swap
+# those for Exarch's and keep the old ones as *.pre-exarch
+for rc in .bashrc .bash_profile .inputrc; do
+  for target in "/etc/skel/$rc" "$USER_HOME/$rc"; do
+    [[ -f "$target" ]] && grep -q 'Exarch' "$target" && continue
+    [[ -f "$target" ]] && mv -f "$target" "$target.pre-exarch"
+    install -m644 "$DATA/airootfs/etc/skel/$rc" "$target"
+    if [[ "$target" == "$USER_HOME"/* ]]; then
+      chown "$USER_NAME:" "$target"
+      [[ -f "$target.pre-exarch" ]] && chown "$USER_NAME:" "$target.pre-exarch"
+    fi
+  done
+done
+[[ -f "$USER_HOME/.bashrc.pre-exarch" ]] &&
+  log "Your previous ~/.bashrc is at ~/.bashrc.pre-exarch (put your own lines in ~/.bashrc.local)"
+
+if [[ "$(getent passwd "$USER_NAME" | cut -d: -f7)" != */bash ]]; then
+  log "Setting bash as $USER_NAME's shell"
+  chsh -s /bin/bash "$USER_NAME"
+fi
+
+# "command not found" hints need pkgfile's database
+if command -v pkgfile &>/dev/null; then
+  pkgfile --update >/dev/null 2>&1 || warn "pkgfile --update failed (runs again weekly)"
+  systemctl enable pkgfile-update.timer 2>/dev/null || true
+fi
+
+# --- NVIDIA -------------------------------------------------------------------
+setup_nvidia() {
+  if ! lspci -n 2>/dev/null | awk '$2 ~ /^03/ && $3 ~ /^10de:/' | grep -q .; then
+    log "No NVIDIA GPU found, skipping driver setup"
+    return 0
+  fi
+  log "NVIDIA GPU found: setting up the open kernel modules"
+
+  local want=(nvidia-utils lib32-nvidia-utils egl-wayland libva-nvidia-driver nvidia-settings)
+  if ! { pacman -Qq nvidia-open nvidia-open-dkms nvidia-open-lts 2>/dev/null || true; } | grep -q .; then
+    want+=(nvidia-open-dkms)
+    local k
+    while read -r k; do want+=("$k-headers"); done < <(pacman -Qq | grep -Ex 'linux(-lts|-zen|-hardened)?')
+  fi
+  pacman -S --needed --noconfirm "${want[@]}"
+
+  install -Dm644 "$DATA/airootfs/etc/modprobe.d/exarch-nvidia.conf" /etc/modprobe.d/exarch-nvidia.conf
+  install -Dm644 "$DATA/airootfs/etc/nvidia/nvidia-application-profiles-rc.d/50-exarch-wayland-vram.json" \
+    /etc/nvidia/nvidia-application-profiles-rc.d/50-exarch-wayland-vram.json
+  install -Dm644 "$DATA/config/nvidia-initcpio.hook" /etc/pacman.d/hooks/nvidia.hook
+
+  log "Early KMS: NVIDIA modules in the initramfs, generic kms hook removed"
+  if ! grep -Eq '^MODULES=.*nvidia_drm' /etc/mkinitcpio.conf; then
+    sed -i -E 's/^MODULES=\((.*)\)/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/; s/^MODULES=\( /MODULES=(/' /etc/mkinitcpio.conf
+  fi
+  sed -i -E '/^HOOKS=/ { s/ kms / /; s/ kms\)/)/; s/\(kms /(/ }' /etc/mkinitcpio.conf
+  mkinitcpio -P
+
+  systemctl enable nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service
+
+  install -d /etc/exarch /etc/environment.d
+  cat > /etc/exarch/gpu.env <<'EOF'
+LIBVA_DRIVER_NAME=nvidia
+__GLX_VENDOR_LIBRARY_NAME=nvidia
+GBM_BACKEND=nvidia-drm
+NVD_BACKEND=direct
+EOF
+  cp /etc/exarch/gpu.env /etc/environment.d/90-exarch-nvidia.conf
+  log "NVIDIA ready. Once a driver version feels right, hold it with: exarch driver pin"
+}
+(( NVIDIA )) && setup_nvidia
+
+# --- login manager: greetd (niri default, Plasma fallback) -----------------------
+log "Login manager: greetd + tuigreet (pick niri or Plasma with F3)"
+install -Dm644 "$DATA/config/greetd.installed.toml" /etc/greetd/config.toml
+for dm in sddm gdm lightdm plasmalogin; do
+  systemctl disable "$dm.service" 2>/dev/null || true
+done
+systemctl enable -f greetd.service
+systemctl enable NetworkManager.service 2>/dev/null || true
+
+if pacman -Q docker &>/dev/null; then
+  systemctl enable docker.service
+  usermod -aG docker "$USER_NAME"
+  warn "docker group = root-equivalent. Prefer rootless podman for daily use."
+fi
+
+# --- hardening ----------------------------------------------------------------
+if (( HARDEN )); then
+  log "Kernel sysctl hardening"
+  install -Dm644 "$DATA/airootfs/etc/sysctl.d/90-exarch-hardening.conf" \
+    /etc/sysctl.d/90-exarch-hardening.conf
+  sysctl --system >/dev/null
+
+  if command -v ufw &>/dev/null; then
+    log "Firewall: deny incoming, allow outgoing"
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw --force enable
+    systemctl enable ufw.service
+  fi
+
+  if pacman -Q apparmor &>/dev/null; then
+    systemctl enable apparmor.service
+    if ! grep -q 'apparmor' /proc/cmdline; then
+      warn "AppArmor installed but not active. Add these kernel parameters to your bootloader:"
+      warn "  lsm=landlock,lockdown,yama,integrity,apparmor,bpf"
+    fi
+  fi
+
+  if [[ "$(findmnt -no FSTYPE /)" == btrfs ]] && command -v snapper &>/dev/null; then
+    if [[ ! -f /etc/snapper/configs/root ]]; then
+      log "Snapper: snapshots of / before every pacman transaction"
+      if mountpoint -q /.snapshots; then
+        # archinstall already made an @.snapshots subvolume; snapper wants
+        # to create its own, so swap it back in after create-config.
+        umount /.snapshots
+        rmdir /.snapshots
+        snapper -c root create-config /
+        btrfs subvolume delete /.snapshots
+        mkdir /.snapshots
+        mount -a
+      else
+        snapper -c root create-config /
+      fi
+      chmod 750 /.snapshots
+      systemctl enable --now snapper-timeline.timer snapper-cleanup.timer
+    fi
+  fi
+fi
+
+log "Done. Reboot: the greeter starts niri by default (F3 to pick Plasma)."
+log "After login: run 'exarch' for status, the tool browser, packs and driver pinning."

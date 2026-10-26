@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Violet lock screen (config in ~/.config/swaylock/config).
+pgrep -x swaylock >/dev/null && exit 0
+exec swaylock -f

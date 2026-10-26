@@ -1,0 +1,48 @@
+# STRICT (goes on the ISO). Shell, daily drivers, safety net.
+bash-completion
+starship
+pkgfile
+fastfetch
+neovim
+tmux
+btop
+git
+github-cli
+lazygit
+openssh
+ripgrep
+fd
+bat
+eza
+fzf
+zoxide
+jq
+go-yq
+curl
+wget
+unzip
+base-devel
+man-db
+
+# Languages
+python
+python-pipx
+go
+rustup
+nodejs
+npm
+
+# Editor: Code-OSS (MIT build, Open VSX). Microsoft's VS Code is in nonfree.
+code
+
+# Stability: compressed swap in RAM, pacdiff/paccache/checkupdates
+zram-generator
+pacman-contrib
+
+# Safety net: snapshots, firewall, MAC, Secure Boot keys
+btrfs-progs
+snapper
+snap-pac
+ufw
+apparmor
+sbctl

@@ -1,0 +1,11 @@
+[Unit]
+Description=Create Exarch live user
+Before=display-manager.service
+ConditionPathExists=!/home/exarch
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/exarch-live-user
+
+[Install]
+WantedBy=multi-user.target

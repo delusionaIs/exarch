@@ -1,0 +1,64 @@
+# STRICT (goes on the ISO). Desktop: niri (default) + KDE Plasma (fallback).
+# The Noctalia shell itself comes from the AUR (packs/aur-core.txt); if it
+# can't be built, exarch-shell falls back to the waybar/fuzzel/mako stack below.
+
+# niri session
+niri
+xwayland-satellite
+xdg-desktop-portal-gnome
+xdg-desktop-portal-gtk
+gnome-keyring
+swaybg
+swaylock
+swayidle
+waybar
+fuzzel
+mako
+grim
+slurp
+wl-clipboard
+brightnessctl
+playerctl
+kitty
+nautilus
+
+# Login: greetd + tuigreet lists both niri and Plasma sessions
+greetd
+greetd-tuigreet
+
+# KDE Plasma fallback session (proven-smooth cursor path)
+plasma-desktop
+plasma-nm
+plasma-pa
+kscreen
+powerdevil
+bluedevil
+polkit-kde-agent
+xdg-desktop-portal-kde
+breeze-gtk
+kde-gtk-config
+konsole
+dolphin
+kate
+ark
+spectacle
+
+# Apps
+librewolf   # privacy-hardened Firefox (official extra repo since Aug 2026)
+firefox     # fallback browser
+obsidian    # notes / learning (free, but closed source)
+discord     # chat (free, but closed source)
+
+# Audio
+pipewire
+pipewire-pulse
+pipewire-alsa
+wireplumber
+pavucontrol
+
+# Look
+noto-fonts
+noto-fonts-emoji
+ttf-jetbrains-mono-nerd
+papirus-icon-theme
+adwaita-cursors

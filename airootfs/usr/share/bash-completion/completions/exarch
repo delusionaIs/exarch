@@ -1,0 +1,57 @@
+# bash completion for exarch                                  -*- shell-script -*-
+_exarch() {
+  local cur prev words cword
+  _init_completion 2>/dev/null || {
+    cur="${COMP_WORDS[COMP_CWORD]}"; prev="${COMP_WORDS[COMP_CWORD-1]}"
+    words=("${COMP_WORDS[@]}"); cword=$COMP_CWORD
+  }
+
+  local cmds="status tools packs driver update doctor clean wallpaper bootsplash splash menu welcome version help"
+  local stages="Code Build Test Release Deploy Operate Monitor Recon Attack"
+  local packs_dir=/usr/share/exarch/packs
+
+  if (( cword == 1 )); then
+    mapfile -t COMPREPLY < <(compgen -W "$cmds" -- "$cur")
+    return
+  fi
+
+  case "${words[1]}" in
+    tools|t)
+      if [[ "$prev" == -s || "$prev" == --search ]]; then return; fi
+      mapfile -t COMPREPLY < <(compgen -W "$stages -s --search --missing --installed --plain" -- "$cur")
+      ;;
+    packs|pack|p)
+      if (( cword == 2 )); then
+        mapfile -t COMPREPLY < <(compgen -W "list show install" -- "$cur")
+      else
+        local packs="" f
+        for f in "$packs_dir"/*.txt; do [[ -f "$f" ]] && packs+=" $(basename "$f" .txt)"; done
+        # complete the last name of a comma list: cloud,w<TAB>
+        local head="" last="$cur"
+        [[ "$cur" == *,* ]] && { head="${cur%,*},"; last="${cur##*,}"; }
+        mapfile -t COMPREPLY < <(compgen -W "$packs --accept-nonfree" -- "$last")
+        [[ -n "$head" ]] && COMPREPLY=("${COMPREPLY[@]/#/$head}")
+      fi
+      ;;
+    driver|drv)
+      (( cword == 2 )) && mapfile -t COMPREPLY < <(compgen -W "status pin unpin rollback" -- "$cur")
+      ;;
+    splash)
+      mapfile -t COMPREPLY < <(compgen -W "--loop --banner --static --wallpaper --no-info --timeout --fps" -- "$cur")
+      ;;
+    wallpaper|wall)
+      if (( cword == 2 )); then
+        mapfile -t COMPREPLY < <(compgen -W "pick next set logo static browse status start stop restart help" -- "$cur")
+      elif [[ "${words[2]}" == set ]]; then
+        mapfile -t COMPREPLY < <(compgen -f -- "$cur")
+      fi
+      ;;
+    bootsplash)
+      (( cword == 2 )) && mapfile -t COMPREPLY < <(compgen -W "on off status" -- "$cur")
+      ;;
+    menu)
+      (( cword == 2 )) && mapfile -t COMPREPLY < <(compgen -W "sync clear" -- "$cur")
+      ;;
+  esac
+}
+complete -F _exarch exarch

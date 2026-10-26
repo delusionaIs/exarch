@@ -1,0 +1,7 @@
+# Installed system: greeter only, no autologin. Pick niri or Plasma with F3.
+[terminal]
+vt = 1
+
+[default_session]
+command = "tuigreet --time --remember --remember-user-session --asterisks --greeting 'EXARCH  //  defend · attack · automate' --theme 'border=magenta;title=magenta;greet=magenta;prompt=magenta;time=gray;action=gray;button=magenta;input=white' --sessions /usr/share/wayland-sessions"
+user = "greeter"

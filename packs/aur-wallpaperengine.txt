@@ -1,0 +1,6 @@
+# AUR, optional: Wallpaper Engine scenes and videos from your Steam Workshop
+# subscriptions (`exarch wallpaper`). Only useful if you own Wallpaper Engine
+# on Steam (it needs its assets). Builds from source and pulls in CEF
+# (Chromium) for web wallpapers, so the first build takes a while.
+#   exarch packs install aur-wallpaperengine
+linux-wallpaperengine-git

@@ -1,0 +1,13 @@
+[Unit]
+Description=Exarch GPU detection (live ISO)
+After=systemd-udev-settle.service systemd-modules-load.service
+Wants=systemd-udev-settle.service
+Before=greetd.service display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/exarch-gpu-detect
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

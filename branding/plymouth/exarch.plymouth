@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Exarch
+Description=Exarch boot splash: the logo with a breathing violet glow
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/exarch
+ScriptFile=/usr/share/plymouth/themes/exarch/exarch.script

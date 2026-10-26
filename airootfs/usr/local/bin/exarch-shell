@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Started by niri at login. Wallpaper (static + live), polkit agent, idle lock, then the
+# desktop shell: Noctalia if installed, otherwise the themed waybar stack.
+set -u
+
+wall=/usr/share/exarch/branding/wallpaper-1080p.png
+[[ -f "$wall" ]] && swaybg -m fill -i "$wall" &
+
+for agent in /usr/lib/polkit-kde-authentication-agent-1 /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1; do
+  if [[ -x "$agent" ]]; then "$agent" & break; fi
+done
+
+# Animated wallpaper (Wallpaper Engine scene, video, GIF...) on the background
+# layer, above the static image (which stays as the fallback). Started a moment
+# after the shell so it stacks above the shell's own wallpaper.
+# Change it: exarch wallpaper   (picker)  |  exarch wallpaper static
+(sleep 3; exarch wallpaper start) &
+
+swayidle -w \
+  timeout 600 'exarch-lock' \
+  timeout 900 'niri msg action power-off-monitors' \
+  before-sleep 'exarch-lock' &
+
+noctalia_installed() {
+  command -v qs >/dev/null || return 1
+  local d
+  for d in /etc/xdg/quickshell/noctalia-shell /usr/share/quickshell/noctalia-shell \
+           "${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/noctalia-shell"; do
+    [[ -d "$d" ]] && return 0
+  done
+  return 1
+}
+
+if noctalia_installed && [[ "${EXARCH_SHELL:-}" != fallback ]]; then
+  exec qs -c noctalia-shell
+fi
+
+mako &
+exec waybar

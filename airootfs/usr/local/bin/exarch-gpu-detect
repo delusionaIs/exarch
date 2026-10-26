@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Live ISO, runs before the login manager. Decides the graphics stack:
+#   - "exarch.safe" on the kernel command line -> nouveau/Mesa + Plasma
+#   - NVIDIA GPU that binds to nvidia-open     -> NVIDIA env + niri
+#   - NVIDIA GPU too old for nvidia-open       -> nouveau + Plasma
+#   - Intel / AMD only                         -> Mesa + niri
+# Writes /run/exarch/session and /run/exarch/gpu.env for exarch-session.
+set -u
+mkdir -p /run/exarch
+: > /run/exarch/gpu.env
+echo niri > /run/exarch/session
+
+log() { echo "exarch-gpu-detect: $*" | systemd-cat -t exarch-gpu-detect 2>/dev/null || echo "$*"; }
+
+fallback() {
+  log "$1, using nouveau/Mesa + Plasma"
+  modprobe nouveau 2>/dev/null || true
+  echo plasma > /run/exarch/session
+}
+
+if grep -qw 'exarch.safe' /proc/cmdline; then
+  fallback "safe graphics requested"
+  exit 0
+fi
+
+# PCI class 03xx = display controller, vendor 10de = NVIDIA
+if ! lspci -n 2>/dev/null | awk '$2 ~ /^03/ && $3 ~ /^10de:/' | grep -q .; then
+  log "no NVIDIA GPU, using Mesa"
+  exit 0
+fi
+
+modprobe nvidia_drm 2>/dev/null
+# Give the driver a moment to bind to the card
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if compgen -G '/sys/bus/pci/drivers/nvidia/0000:*' >/dev/null; then
+    log "NVIDIA GPU bound to nvidia-open"
+    cat > /run/exarch/gpu.env <<'EOF'
+LIBVA_DRIVER_NAME=nvidia
+__GLX_VENDOR_LIBRARY_NAME=nvidia
+GBM_BACKEND=nvidia-drm
+NVD_BACKEND=direct
+EOF
+    exit 0
+  fi
+  sleep 0.5
+done
+
+fallback "NVIDIA GPU not supported by nvidia-open (pre-Turing?)"

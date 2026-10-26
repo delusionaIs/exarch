@@ -1,0 +1,6 @@
+# Tier 1 (optional): cloud security. sudo exarch-setup --packs-only --packs cloud
+aws-cli-v2
+azure-cli
+prowler
+steampipe
+pacu

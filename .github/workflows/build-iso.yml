@@ -1,0 +1,87 @@
+name: build-iso
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "branding/*.svg"]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1" # fresh ISO every Monday
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-checks:
+    runs-on: ubuntu-latest
+    steps:
+      # DevSecOps habit: pin third-party actions to a full commit SHA, not a tag.
+      - uses: actions/checkout@v4
+
+      - name: ShellCheck
+        run: |
+          shellcheck -x build.sh install.sh scripts/*.sh \
+            airootfs/usr/local/bin/exarch airootfs/usr/local/bin/exarch-*
+          python3 -m py_compile airootfs/usr/local/lib/exarch/splash.py scripts/make-logo-mask.py
+
+      - name: Rust (exarch-splash)
+        run: |
+          cargo clippy --locked --release --manifest-path rust/exarch-splash/Cargo.toml -- -D warnings
+          cargo build --locked --release --manifest-path rust/exarch-splash/Cargo.toml
+
+      - name: Secret scan, misconfig scan, package check (in Arch)
+        run: |
+          docker run --rm -v "$PWD":/repo -w /repo archlinux:latest bash -c '
+            set -e
+            pacman -Syu --noconfirm --needed gitleaks trivy curl >/dev/null
+            gitleaks dir --redact --exit-code 1 .
+            trivy fs --scanners secret,misconfig --exit-code 1 --no-progress .
+            bash scripts/setup-blackarch-keyring.sh >/dev/null
+            bash scripts/check-packages.sh
+          '
+        env:
+          BLACKARCH_STRAP_SHA256: ${{ vars.BLACKARCH_STRAP_SHA256 }}
+
+  build:
+    needs: security-checks
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # keyless signing with Sigstore
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space for the ISO build
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af
+          df -h /
+
+      - name: Build ISO
+        env:
+          BLACKARCH_STRAP_SHA256: ${{ vars.BLACKARCH_STRAP_SHA256 }}
+        run: bash scripts/build-in-docker.sh
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign checksums (keyless, tied to this workflow run)
+        run: |
+          sudo chown -R "$USER" out
+          cosign sign-blob --yes --bundle out/SHA256SUMS.sigstore.json out/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exarch-iso
+          path: |
+            out/*.iso
+            out/SHA256SUMS
+            out/SHA256SUMS.sigstore.json
+            out/pkglist.txt
+          retention-days: 7
+          compression-level: 0

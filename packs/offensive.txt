@@ -1,0 +1,8 @@
+# Tier 1 (optional): Kali-style offensive basics. Only use against systems
+# you own or are explicitly allowed to test. sudo exarch-setup --packs-only --packs offensive
+metasploit
+hashcat
+john
+hydra
+impacket
+seclists

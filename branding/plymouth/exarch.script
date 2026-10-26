@@ -1,0 +1,92 @@
+# Exarch boot splash (Plymouth script theme)
+# Logo with a breathing violet glow, a thin progress line, the title,
+# and a password prompt for encrypted disks.
+
+Window.SetBackgroundTopColor(0.055, 0.035, 0.10);
+Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
+
+W = Window.GetWidth();
+H = Window.GetHeight();
+X0 = Window.GetX();
+Y0 = Window.GetY();
+
+# logo scaled to about a third of the screen height
+logo_img = Image("logo.png");
+scale = H * 0.30 / logo_img.GetHeight();
+logo_img = logo_img.Scale(logo_img.GetWidth() * scale, logo_img.GetHeight() * scale);
+glow_img = Image("glow.png");
+glow_img = glow_img.Scale(glow_img.GetWidth() * scale, glow_img.GetHeight() * scale);
+
+cx = X0 + W / 2;
+cy = Y0 + H * 0.44;
+
+glow = Sprite(glow_img);
+glow.SetPosition(cx - glow_img.GetWidth() / 2, cy - glow_img.GetHeight() / 2, 5);
+logo = Sprite(logo_img);
+logo.SetPosition(cx - logo_img.GetWidth() / 2, cy - logo_img.GetHeight() / 2, 10);
+
+title_img = Image.Text("E  X  A  R  C  H", 0.78, 0.63, 1.0, 1.0, "Sans Bold 20");
+title = Sprite(title_img);
+title_y = cy + logo_img.GetHeight() / 2 + H * 0.05;
+title.SetPosition(cx - title_img.GetWidth() / 2, title_y, 10);
+
+tag_img = Image.Text("// DEFEND . ATTACK . AUTOMATE", 0.48, 0.48, 0.55, 1.0, "Sans 11");
+tag = Sprite(tag_img);
+tag.SetPosition(cx - tag_img.GetWidth() / 2, title_y + title_img.GetHeight() + 8, 10);
+
+# progress line
+bar_w = W * 0.18;
+bar_y = Y0 + H * 0.86;
+bar_bg = Sprite(Image("bar-bg.png").Scale(bar_w, 3));
+bar_bg.SetPosition(cx - bar_w / 2, bar_y, 10);
+bar_img = Image("bar.png");
+bar = Sprite();
+bar.SetPosition(cx - bar_w / 2, bar_y, 11);
+
+fun progress_callback(duration, progress) {
+    if (progress > 0.01) {
+        bar.SetImage(bar_img.Scale(bar_w * progress, 3));
+    }
+}
+Plymouth.SetBootProgressFunction(progress_callback);
+
+# breathing glow
+tick = 0;
+fun refresh_callback() {
+    tick++;
+    glow.SetOpacity(0.45 + 0.45 * Math.Sin(tick / 22));
+}
+Plymouth.SetRefreshFunction(refresh_callback);
+
+# password prompt (LUKS)
+prompt = Sprite();
+dots = Sprite();
+fun display_password_callback(text, bullets) {
+    p_img = Image.Text(text, 0.78, 0.63, 1.0, 1.0, "Sans 13");
+    prompt.SetImage(p_img);
+    prompt.SetPosition(cx - p_img.GetWidth() / 2, bar_y - 70, 20);
+    s = "";
+    for (i = 0; i < bullets; i++) s += "*  ";
+    if (bullets == 0) s = "_";
+    d_img = Image.Text(s, 1.0, 0.4, 0.7, 1.0, "Sans Bold 16");
+    dots.SetImage(d_img);
+    dots.SetPosition(cx - d_img.GetWidth() / 2, bar_y - 40, 20);
+    prompt.SetOpacity(1);
+    dots.SetOpacity(1);
+}
+Plymouth.SetDisplayPasswordFunction(display_password_callback);
+
+fun display_normal_callback() {
+    prompt.SetOpacity(0);
+    dots.SetOpacity(0);
+}
+Plymouth.SetDisplayNormalFunction(display_normal_callback);
+
+# status messages (e.g. fsck)
+msg = Sprite();
+fun message_callback(text) {
+    m_img = Image.Text(text, 0.6, 0.6, 0.66, 1.0, "Sans 10");
+    msg.SetImage(m_img);
+    msg.SetPosition(cx - m_img.GetWidth() / 2, Y0 + H * 0.93, 20);
+}
+Plymouth.SetMessageFunction(message_callback);

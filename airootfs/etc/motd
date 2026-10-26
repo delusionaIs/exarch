@@ -1,0 +1,10 @@
+
+  [ E X A R C H ]   live system
+
+  0. Tour:     exarch   (status, tool browser, packs)
+  1. Wi-Fi:    nmtui
+  2. Install:  archinstall   (Desktop > KDE Plasma, filesystem: btrfs)
+  3. Reboot into the new system, then:
+               git clone https://github.com/delusionaIs/exarch
+               sudo bash ./exarch/install.sh
+
