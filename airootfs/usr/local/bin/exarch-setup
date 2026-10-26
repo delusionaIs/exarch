@@ -110,10 +110,12 @@ paru_ok() {
 }
 ensure_paru() {
   paru_ok && return 0
-  local helper
+  local helper old
   for helper in paru-bin paru; do
     log "Bootstrapping $helper (AUR helper)"
-    pacman -Rdd --noconfirm paru paru-bin paru-bin-debug paru-debug &>/dev/null || true
+    # remove a broken helper first (only the ones actually installed)
+    mapfile -t old < <(pacman -Qq paru paru-bin paru-bin-debug paru-debug 2>/dev/null || true)
+    (( ${#old[@]} )) && pacman -Rdd --noconfirm "${old[@]}" >/dev/null
     sudo -u "$USER_NAME" bash -c "
       set -e; d=\$(mktemp -d); cd \"\$d\"
       git clone --depth 1 https://aur.archlinux.org/$helper.git

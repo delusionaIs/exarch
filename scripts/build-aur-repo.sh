@@ -40,7 +40,9 @@ paru_ok() {
 if ! paru_ok; then
   for helper in paru-bin paru; do
     log "Bootstrapping $helper"
-    pacman -Rdd --noconfirm paru paru-bin paru-bin-debug paru-debug &>/dev/null || true
+    # remove a broken helper first (only the ones actually installed)
+    mapfile -t old < <(pacman -Qq paru paru-bin paru-bin-debug paru-debug 2>/dev/null || true)
+    (( ${#old[@]} )) && pacman -Rdd --noconfirm "${old[@]}" >/dev/null
     sudo -u builder bash -c "
       set -e
       d=\$(mktemp -d); cd \"\$d\"
