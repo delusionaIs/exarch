@@ -1,0 +1,27 @@
+# STRICT: live-ISO-only packages. A wrong name here fails the build on purpose.
+# (Arch's releng list + packs/desktop.txt + packs/base.txt are merged in too.)
+
+# BlackArch repo trust, so the live system can pull security tools
+blackarch-keyring
+blackarch-mirrorlist
+
+# Networking (replaces releng's iwd + systemd-networkd)
+networkmanager
+
+# GPU detection
+pciutils
+
+# NVIDIA, Turing (RTX 20xx / GTX 16xx) and newer. Prebuilt modules matched to
+# the ISO's `linux` kernel: DKMS can't build on a read-only live system.
+nvidia-open
+nvidia-utils
+lib32-nvidia-utils
+egl-wayland
+libva-nvidia-driver
+nvidia-settings
+
+# Intel / AMD / safe-graphics fallback
+mesa
+lib32-mesa
+vulkan-intel
+vulkan-radeon

@@ -76,6 +76,8 @@ jobs:
           set +e
           bash scripts/build-in-docker.sh 2>&1 | tee build.log
           rc=${PIPESTATUS[0]}
+          aur=$(sed 's/\x1b\[[0-9;]*m//g' build.log | grep -E '^\[aur\]|libalpm|==> ERROR' | tail -n 40 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          [ -n "$aur" ] && echo "::notice title=AUR packages::$aur"
           if [ "$rc" -ne 0 ]; then
             msg=$(tail -n 40 build.log | sed 's/\x1b\[[0-9;]*m//g' | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
             echo "::error title=ISO build failed (last 40 lines)::$msg"

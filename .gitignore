@@ -3,3 +3,4 @@ out/
 *.iso
 rust/*/target/
 build.log
+!config/packages.iso
