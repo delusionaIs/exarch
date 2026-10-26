@@ -89,9 +89,9 @@ if (( SECURE_BOOT_ONLY )); then
 fi
 
 # --- repos --------------------------------------------------------------------
-if grep -q '^#\[multilib\]' /etc/pacman.conf; then
+if ! grep -q '^\[multilib\]' /etc/pacman.conf; then
   log "Enabling multilib"
-  sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
+  bash "$DATA/scripts/enable-multilib.sh" /etc/pacman.conf
 fi
 log "Enabling BlackArch repo"
 bash "$DATA/scripts/setup-blackarch-keyring.sh"

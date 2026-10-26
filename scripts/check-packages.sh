@@ -13,8 +13,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 conf="$(mktemp)"
 trap 'rm -f "$conf"' EXIT
 cp /etc/pacman.conf "$conf"
-sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' "$conf"
+bash "$ROOT/scripts/enable-multilib.sh" "$conf"
 pacman --config "$conf" -Sy >/dev/null
+pacman --config "$conf" -Sl multilib 2>/dev/null | grep -q . ||
+  echo "warning: multilib repo is empty or missing: $(grep -n multilib "$conf" | tr '\n' ' ')"
 
 hard=0
 soft=0

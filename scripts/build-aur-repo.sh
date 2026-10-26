@@ -18,7 +18,7 @@ warn() { printf '\e[1;33m[aur]\e[0m %s\n' "$*" >&2; }
 [[ $EUID -eq 0 ]] || { echo "run as root (in the build container)" >&2; exit 1; }
 
 # multilib for any lib32 deps
-sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
+bash "$ROOT/scripts/enable-multilib.sh" /etc/pacman.conf
 pacman -Syu --noconfirm --needed base-devel git sudo >/dev/null
 
 if ! id builder &>/dev/null; then

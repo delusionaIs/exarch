@@ -42,7 +42,7 @@ mkdir -p "$PROFILE" "$OUT"
 cp -a /usr/share/archiso/configs/releng/. "$PROFILE/"
 
 log "Repos: multilib + BlackArch (+ local AUR repo if built)"
-sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' "$PROFILE/pacman.conf"
+bash "$ROOT/scripts/enable-multilib.sh" "$PROFILE/pacman.conf"
 cat "$ROOT/config/pacman.blackarch.conf" >> "$PROFILE/pacman.conf"
 have_localrepo=0
 if [[ -f "$LOCALREPO/exarch-local.db.tar.gz" ]]; then
