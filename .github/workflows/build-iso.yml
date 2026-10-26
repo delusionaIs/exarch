@@ -31,6 +31,10 @@ jobs:
 
       - name: Rust (exarch-splash)
         run: |
+          # Pinned: a new runner image or clippy release must not break the build
+          rustup toolchain install 1.97.0 --profile minimal -c clippy
+          rustup default 1.97.0
+          cargo --version && cargo clippy --version
           cargo clippy --locked --release --manifest-path rust/exarch-splash/Cargo.toml -- -D warnings
           cargo build --locked --release --manifest-path rust/exarch-splash/Cargo.toml
 
