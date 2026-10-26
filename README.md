@@ -20,7 +20,7 @@ checksums are signed with Sigstore.
 | Base | Arch Linux, built with `archiso` on top of Arch's official `releng` profile |
 | Desktop | **niri** (scrollable tiling Wayland) + **Noctalia** shell, themed violet. Falls back to a themed waybar/fuzzel/mako setup if Noctalia isn't available |
 | Fallback session | **KDE Plasma** (Wayland), pick it in the login screen with F3 |
-| Apps | **LibreWolf** (Firefox kept as a fallback), **Obsidian**, **Discord**. All free of charge; Obsidian and Discord are closed source |
+| Apps | **LibreWolf** (browser), **Obsidian**, **Discord**. All free of charge; Obsidian and Discord are closed source |
 | Login | greetd + tuigreet (live ISO logs in automatically) |
 | Shell | **bash** in kitty: ble.sh (fish-style suggestions + syntax highlighting), starship prompt, fzf (`Ctrl-R` history, `Ctrl-T` files, `Alt-C` dirs), zoxide (`z`), eza, bat, "command not found" package hints. Personal additions go in `~/.bashrc.local` |
 | GPU | `nvidia-open` + `lib32-nvidia-utils` + `egl-wayland` + VA-API, auto-detected at boot; Mesa for Intel/AMD |

@@ -45,7 +45,6 @@ spectacle
 
 # Apps
 librewolf   # privacy-hardened Firefox (official extra repo since Aug 2026)
-firefox     # fallback browser
 obsidian    # notes / learning (free, but closed source)
 discord     # chat (free, but closed source)
 
