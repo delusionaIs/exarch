@@ -27,14 +27,24 @@ if ! id builder &>/dev/null; then
   chmod 440 /etc/sudoers.d/builder
 fi
 
-if ! command -v paru &>/dev/null; then
-  log "Bootstrapping paru"
-  sudo -u builder bash -c '
-    set -e
-    d=$(mktemp -d); cd "$d"
-    git clone --depth 1 https://aur.archlinux.org/paru-bin.git
-    cd paru-bin && makepkg -si --noconfirm'
+# paru-bin is prebuilt and quick, but breaks whenever pacman bumps libalpm
+# before paru-bin is rebuilt. Then fall back to compiling paru from source.
+paru_ok() { command -v paru &>/dev/null && paru --version &>/dev/null; }
+if ! paru_ok; then
+  for helper in paru-bin paru; do
+    log "Bootstrapping $helper"
+    pacman -Rdd --noconfirm paru paru-bin paru-bin-debug paru-debug &>/dev/null || true
+    sudo -u builder bash -c "
+      set -e
+      d=\$(mktemp -d); cd \"\$d\"
+      git clone --depth 1 https://aur.archlinux.org/$helper.git
+      cd $helper && makepkg -si --noconfirm" || true
+    paru_ok && break
+    warn "$helper doesn't run with this pacman, trying the next option"
+  done
+  paru_ok || { warn "no working paru: building the ISO without AUR packages"; exit 0; }
 fi
+log "Using $(paru --version | head -n1)"
 
 mapfile -t pkgs < <(sed 's/#.*//; s/[[:space:]]//g; /^$/d' "$ROOT/packs/aur-core.txt")
 built=(); failed=()
@@ -52,8 +62,10 @@ done
 log "Collecting packages into $REPO"
 rm -rf "$REPO"
 mkdir -p "$REPO"
-find /home/builder/.cache/paru/clone -name '*.pkg.tar.zst' ! -name '*-debug-*' \
-  -exec cp {} "$REPO/" \;
+if [[ -d /home/builder/.cache/paru/clone ]]; then
+  find /home/builder/.cache/paru/clone -name '*.pkg.tar.zst' ! -name '*-debug-*' \
+    -exec cp {} "$REPO/" \;
+fi
 
 shopt -s nullglob
 files=("$REPO"/*.pkg.tar.zst)

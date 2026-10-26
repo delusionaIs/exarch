@@ -98,13 +98,23 @@ bash "$DATA/scripts/setup-blackarch-keyring.sh"
 pacman -Syu --noconfirm
 
 # --- packs --------------------------------------------------------------------
+# paru-bin is prebuilt and quick, but breaks whenever pacman bumps libalpm
+# before paru-bin is rebuilt. Then fall back to compiling paru from source.
+paru_ok() { command -v paru &>/dev/null && paru --version &>/dev/null; }
 ensure_paru() {
-  command -v paru &>/dev/null && return 0
-  log "Bootstrapping paru (AUR helper)"
-  sudo -u "$USER_NAME" bash -c '
-    set -e; d=$(mktemp -d); cd "$d"
-    git clone --depth 1 https://aur.archlinux.org/paru-bin.git
-    cd paru-bin && makepkg -si --noconfirm'
+  paru_ok && return 0
+  local helper
+  for helper in paru-bin paru; do
+    log "Bootstrapping $helper (AUR helper)"
+    pacman -Rdd --noconfirm paru paru-bin paru-bin-debug paru-debug &>/dev/null || true
+    sudo -u "$USER_NAME" bash -c "
+      set -e; d=\$(mktemp -d); cd \"\$d\"
+      git clone --depth 1 https://aur.archlinux.org/$helper.git
+      cd $helper && makepkg -si --noconfirm" || true
+    paru_ok && return 0
+    warn "$helper doesn't run with this pacman, trying the next option"
+  done
+  return 1
 }
 
 install_pack() {
@@ -121,7 +131,7 @@ install_pack() {
   fi
 
   if [[ "$pack" == aur-* ]]; then
-    ensure_paru
+    ensure_paru || { warn "no working AUR helper, skipped pack $pack (retry: exarch packs install $pack)"; return 0; }
     log "Installing AUR pack: $pack"
     for p in "${want[@]}"; do
       sudo -u "$USER_NAME" paru -S --needed --noconfirm "$p" || warn "AUR: $p failed, skipped"
