@@ -70,7 +70,17 @@ jobs:
       - name: Build ISO
         env:
           BLACKARCH_STRAP_SHA256: ${{ vars.BLACKARCH_STRAP_SHA256 }}
-        run: bash scripts/build-in-docker.sh
+        run: |
+          # On failure, put the last log lines on the run's summary page as an
+          # error annotation, so the cause shows without opening the full log.
+          set +e
+          bash scripts/build-in-docker.sh 2>&1 | tee build.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            msg=$(tail -n 40 build.log | sed 's/\x1b\[[0-9;]*m//g' | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+            echo "::error title=ISO build failed (last 40 lines)::$msg"
+          fi
+          exit "$rc"
 
       - uses: sigstore/cosign-installer@v3
 

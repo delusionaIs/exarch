@@ -2,3 +2,4 @@ work/
 out/
 *.iso
 rust/*/target/
+build.log
