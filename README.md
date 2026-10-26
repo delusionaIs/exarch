@@ -26,7 +26,7 @@ checksums are signed with Sigstore.
 | GPU | `nvidia-open` on the ISO, `nvidia-open-dkms` once installed (builds the driver for every kernel), `lib32-nvidia-utils`, `egl-wayland`, VA-API; Mesa for Intel/AMD |
 | Boot menu | Default · Safe graphics (nouveau + Plasma) · Rescue (text mode) |
 | Repos | core, extra, multilib, **BlackArch**, plus a local repo of AUR packages built in CI |
-| Hardening | sysctl hardening, ufw deny-incoming, AppArmor, btrfs snapshots, optional Secure Boot with your own keys |
+| Hardening | sysctl hardening, ufw deny-incoming, AppArmor (switched on in the boot entries), btrfs snapshots, optional Secure Boot with your own keys |
 | Kernels | `linux` by default plus `linux-lts` as a fallback entry in the boot menu. `exarch update` warns before a jump to a new kernel series, `exarch doctor` checks that every kernel has its NVIDIA module |
 | Stability | zram swap (zstd, compressed RAM), systemd-oomd kills a leaking app before the desktop freezes, weekly TRIM, package cache trimmed to the last 3 versions (rollbacks keep working), journal capped at 500 MB, snapshots before and after every pacman run (at most 10, capped at 30% of the disk), one network stack (NetworkManager), `exarch update` / `exarch doctor` |
 | Wallpapers | Animated wallpapers on niri, free out of the box: Exarch's own GPU shader wallpapers (violet nebula, synthwave grid, aurora, neon logo), plus any video (mpvpaper, pauses when hidden), GIFs and images with transitions (awww), the spinning logo, and optionally **Wallpaper Engine** scenes if you own it on Steam. Picked automatically at login, changed with `exarch wallpaper` |
@@ -179,7 +179,7 @@ cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
   <https://blackarch.org/downloads.html> so CI refuses a tampered `strap.sh`.
 - The AUR packages in `packs/aur-core.txt` are built from PKGBUILDs in CI.
   Keep that list short and review changes.
-- Pin the GitHub Actions in the workflow to commit SHAs before relying on it.
+- The GitHub Actions in the workflow are pinned to commit SHAs. Bump them on purpose, after reading their release notes.
 - Being in the `docker` group is root-equivalent; prefer rootless `podman`.
 - The offensive tools are for systems you own or are authorized to test.
 

@@ -32,7 +32,8 @@ rustup
 nodejs
 npm
 
-# Editor: Code-OSS (MIT build, Open VSX). Microsoft's VS Code is in nonfree.
+# Editor: Code-OSS (MIT build, Open VSX extensions). Microsoft's own build,
+# with its marketplace, is in the AUR: paru -S visual-studio-code-bin
 code
 
 # Stability: compressed swap in RAM, pacdiff/paccache/checkupdates

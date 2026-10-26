@@ -419,9 +419,32 @@ if (( HARDEN )); then
 
   if pacman -Q apparmor &>/dev/null; then
     systemctl enable apparmor.service
-    if ! grep -q 'apparmor' /proc/cmdline; then
-      warn "AppArmor installed but not active. Add these kernel parameters to your bootloader:"
-      warn "  lsm=landlock,lockdown,yama,integrity,apparmor,bpf"
+    # Arch's kernels don't load AppArmor unless it's in the lsm= list.
+    lsm="lsm=landlock,lockdown,yama,integrity,apparmor,bpf"
+    added=0 esp=""
+    esp="$(boot_entries_dir || true)"
+    if [[ -n "$esp" ]]; then
+      for entry in "$esp"/loader/entries/*.conf; do
+        [[ -f "$entry" ]] || continue
+        grep -q '^options' "$entry" || continue
+        grep -q 'lsm=' "$entry" && continue
+        [[ -e "$entry.pre-exarch" ]] || cp "$entry" "$entry.pre-exarch"
+        sed -i "/^options/ s/\$/ $lsm/" "$entry"
+        added=1
+      done
+    elif [[ -f /etc/default/grub ]] && command -v grub-mkconfig &>/dev/null; then
+      if ! grep -q 'lsm=' /etc/default/grub; then
+        [[ -e /etc/default/grub.pre-exarch ]] || cp /etc/default/grub /etc/default/grub.pre-exarch
+        sed -i -E "s/^(GRUB_CMDLINE_LINUX_DEFAULT=\")(.*)\"/\1\2 $lsm\"/" /etc/default/grub
+        grub-mkconfig -o /boot/grub/grub.cfg >/dev/null
+        added=1
+      fi
+    fi
+    if (( added )); then
+      log "AppArmor: added $lsm to the boot entries (active after reboot; backups: *.pre-exarch)"
+    elif ! grep -q 'apparmor' /proc/cmdline; then
+      warn "AppArmor installed but not active. Add this kernel parameter to your bootloader:"
+      warn "  $lsm"
     fi
   fi
 
