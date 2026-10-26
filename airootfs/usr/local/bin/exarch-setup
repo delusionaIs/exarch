@@ -5,6 +5,7 @@
 #   sudo ./install.sh --packs cloud,web        # full setup + extra packs
 #   sudo ./install.sh --no-harden              # skip firewall/sysctl/apparmor
 #   sudo ./install.sh --no-nvidia              # skip NVIDIA driver setup
+#   sudo ./install.sh --no-lts                 # skip the linux-lts fallback kernel
 #   sudo ./install.sh --secure-boot            # only Secure Boot setup (sbctl)
 #   exarch-setup --packs-only --packs web      # only install extra packs
 #                                              # (or: exarch packs install web)
@@ -18,6 +19,7 @@ DEFAULT_PACKS="desktop,base,core-tools,aur-core,aur-wallpaper"
 EXTRA_PACKS=""
 HARDEN=1
 NVIDIA=1
+LTS=1
 SECURE_BOOT_ONLY=0
 PACKS_ONLY=0
 ACCEPT_NONFREE=0
@@ -28,9 +30,10 @@ while (( $# )); do
     --packs-only) PACKS_ONLY=1; shift ;;
     --no-harden) HARDEN=0; shift ;;
     --no-nvidia) NVIDIA=0; shift ;;
+    --no-lts) LTS=0; shift ;;
     --secure-boot) SECURE_BOOT_ONLY=1; shift ;;
     --accept-nonfree) ACCEPT_NONFREE=1; shift ;;
-    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -265,6 +268,62 @@ if command -v pkgfile &>/dev/null; then
   systemctl enable pkgfile-update.timer 2>/dev/null || true
 fi
 
+# --- fallback kernel ------------------------------------------------------------
+# linux-lts next to linux, with its own boot entry: if a new kernel (or a
+# kernel/driver mismatch) breaks booting, pick "LTS kernel" in the boot menu.
+boot_entries_dir() {
+  local d
+  for d in /boot /efi /boot/efi; do
+    [[ -d "$d/loader/entries" ]] && { echo "$d"; return 0; }
+  done
+  return 1
+}
+
+setup_lts() {
+  local esp="" free_kb main lts
+  if pacman -Q linux-lts &>/dev/null; then
+    log "Fallback kernel: linux-lts already installed"
+  else
+    # kernels + initramfs live on the ESP with systemd-boot; don't fill it up
+    esp="$(boot_entries_dir || true)"
+    free_kb="$(df --output=avail -k "${esp:-/boot}" 2>/dev/null | tail -n1 | tr -dc '0-9')"
+    if (( ${free_kb:-0} < 300000 )); then
+      warn "Skipping the linux-lts fallback kernel: only $(( ${free_kb:-0} / 1024 )) MB free on ${esp:-/boot} (needs ~300 MB)"
+      return 0
+    fi
+    log "Fallback kernel: installing linux-lts"
+    pacman -S --needed --noconfirm linux-lts linux-lts-headers
+  fi
+  pacman -Q linux &>/dev/null && pacman -S --needed --noconfirm linux-headers
+
+  if [[ -f /boot/grub/grub.cfg ]] && command -v grub-mkconfig &>/dev/null; then
+    grub-mkconfig -o /boot/grub/grub.cfg >/dev/null && log "GRUB menu updated (LTS entry under Advanced options)"
+    return 0
+  fi
+
+  esp="$(boot_entries_dir || true)"
+  [[ -n "$esp" ]] || { warn "No systemd-boot entries found: add a boot entry for linux-lts by hand"; return 0; }
+  if grep -lqs 'vmlinuz-linux-lts' "$esp"/loader/entries/*.conf; then
+    log "systemd-boot already has an LTS entry"
+    return 0
+  fi
+  main="$(grep -lE '^linux[[:space:]]+/vmlinuz-linux$' "$esp"/loader/entries/*.conf 2>/dev/null | grep -v fallback | head -n1)"
+  [[ -n "$main" ]] || { warn "No entry for /vmlinuz-linux found in $esp/loader/entries: add the LTS entry by hand"; return 0; }
+  [[ -f "$esp/vmlinuz-linux-lts" ]] || { warn "vmlinuz-linux-lts isn't on $esp: add the LTS entry by hand"; return 0; }
+
+  lts="$esp/loader/entries/exarch-linux-lts.conf"
+  sed -e 's|^title .*|title   Exarch (LTS kernel, fallback)|' \
+      -e 's|/vmlinuz-linux$|/vmlinuz-linux-lts|' \
+      -e 's|/initramfs-linux\.img|/initramfs-linux-lts.img|' \
+      -e '/^sort-key/d' "$main" > "$lts"
+  # keep the normal kernel as the default entry
+  if [[ -f "$esp/loader/loader.conf" ]] && ! grep -q '^default' "$esp/loader/loader.conf"; then
+    echo "default $(basename "$main")" >> "$esp/loader/loader.conf"
+  fi
+  log "systemd-boot: added 'Exarch (LTS kernel, fallback)' ($lts)"
+}
+(( LTS )) && setup_lts
+
 # --- NVIDIA -------------------------------------------------------------------
 setup_nvidia() {
   if ! lspci -n 2>/dev/null | awk '$2 ~ /^03/ && $3 ~ /^10de:/' | grep -q .; then
@@ -274,11 +333,20 @@ setup_nvidia() {
   log "NVIDIA GPU found: setting up the open kernel modules"
 
   local want=(nvidia-utils lib32-nvidia-utils egl-wayland libva-nvidia-driver nvidia-settings)
-  if ! { pacman -Qq nvidia-open nvidia-open-dkms nvidia-open-lts 2>/dev/null || true; } | grep -q .; then
+  local kernels=() prebuilt=() k
+  mapfile -t kernels < <(pacman -Qq | grep -Ex 'linux(-lts|-zen|-hardened)?')
+  mapfile -t prebuilt < <(pacman -Qq nvidia-open nvidia-open-lts nvidia-lts-open 2>/dev/null || true)
+  # DKMS builds the module for every installed kernel, so the LTS fallback
+  # entry boots with NVIDIA too. A prebuilt package only covers one kernel,
+  # and can lag behind a kernel update (Arch, Aug 2026).
+  if ! pacman -Q nvidia-open-dkms &>/dev/null; then
+    if (( ${#prebuilt[@]} )); then
+      log "Switching ${prebuilt[*]} to nvidia-open-dkms (covers all ${#kernels[@]} kernels)"
+      pacman -Rdd --noconfirm "${prebuilt[@]}"
+    fi
     want+=(nvidia-open-dkms)
-    local k
-    while read -r k; do want+=("$k-headers"); done < <(pacman -Qq | grep -Ex 'linux(-lts|-zen|-hardened)?')
   fi
+  for k in "${kernels[@]}"; do want+=("$k-headers"); done
   pacman -S --needed --noconfirm "${want[@]}"
 
   install -Dm644 "$DATA/airootfs/etc/modprobe.d/exarch-nvidia.conf" /etc/modprobe.d/exarch-nvidia.conf
@@ -315,6 +383,18 @@ for dm in sddm gdm lightdm plasmalogin; do
 done
 systemctl enable -f greetd.service
 systemctl enable NetworkManager.service 2>/dev/null || true
+# One network stack only: systemd-networkd next to NetworkManager (e.g. copied
+# from the live ISO) is the classic cause of a 2-minute "wait online" boot hang.
+if pacman -Q networkmanager &>/dev/null; then
+  for unit in systemd-networkd.service systemd-networkd.socket systemd-networkd-wait-online.service; do
+    systemctl disable "$unit" &>/dev/null || true
+  done
+fi
+
+# systemd-boot: update the bootloader itself after systemd updates
+if command -v bootctl &>/dev/null && bootctl is-installed &>/dev/null; then
+  systemctl enable systemd-boot-update.service &>/dev/null || true
+fi
 
 if pacman -Q docker &>/dev/null; then
   systemctl enable docker.service
@@ -361,7 +441,12 @@ if (( HARDEN )); then
         snapper -c root create-config /
       fi
       chmod 750 /.snapshots
-      systemctl enable --now snapper-timeline.timer snapper-cleanup.timer
+      # snap-pac already snapshots every pacman run, so no hourly timeline
+      # snapshots on top. Keep at most 10 (5 marked important), and never
+      # let them use more than 30% of the disk or leave less than 20% free.
+      snapper -c root set-config TIMELINE_CREATE=no NUMBER_LIMIT=10 NUMBER_LIMIT_IMPORTANT=5 \
+        SPACE_LIMIT=0.3 FREE_LIMIT=0.2
+      systemctl enable --now snapper-cleanup.timer
     fi
   fi
 fi

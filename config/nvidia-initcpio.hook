@@ -8,6 +8,7 @@ Type=Package
 Target=nvidia-open
 Target=nvidia-open-dkms
 Target=nvidia-open-lts
+Target=nvidia-lts-open
 Target=nvidia-utils
 Target=linux
 Target=linux-lts

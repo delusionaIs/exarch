@@ -1297,6 +1297,15 @@ arch_news_since() {
   done
 }
 
+# "linux 7.2.7.arch1-1 -> 7.3.1.arch1-1" -> "7.2 7.3" when the series changes
+kernel_series_jump() {
+  have checkupdates || return 0
+  checkupdates 2>/dev/null | awk '$1 == "linux" {
+    split($2, a, "."); split($4, b, ".")
+    if (a[1] "." a[2] != b[1] "." b[2]) print a[1] "." a[2], b[1] "." b[2]
+  }'
+}
+
 pacnew_files() { find /etc -xdev \( -name '*.pacnew' -o -name '*.pacsave' \) 2>/dev/null; }
 
 reboot_pending() { [[ ! -d "/usr/lib/modules/$(uname -r)" ]]; }
@@ -1311,8 +1320,14 @@ cmd_update() {
   if [[ -n "$news" ]]; then
     printf '\n  %sArch news since your last upgrade%s (read these, some need manual steps):\n\n' "$B$Y" "$N"
     while IFS=$'\t' read -r epoch title link; do
-      printf '  %s%s%s  %s\n    %s%s%s\n' "$D" "$(date -d "@$epoch" +%F)" "$N" "$title" "$D" "$link" "$N"
+      if grep -Eqi 'intervention|requires|urgent|immediately|action required|incident' <<<"$title"; then
+        printf '  %s %s%s%s  %s%s%s\n    %s%s%s\n' "$BAD" "$D" "$(date -d "@$epoch" +%F)" "$N" "$B" "$title" "$N" "$D" "$link" "$N"
+      else
+        printf '    %s%s%s  %s\n    %s%s%s\n' "$D" "$(date -d "@$epoch" +%F)" "$N" "$title" "$D" "$link" "$N"
+      fi
     done <<<"$news"
+    grep -Eqi 'intervention|requires|urgent|immediately|action required|incident' <<<"$news" &&
+      printf '\n  %s%s marked posts need you to do something before or after updating.%s\n' "$B$Y" "$BAD$B$Y" "$N"
     echo
     confirm "Read them? Continue with the upgrade?" || { log "Stopped. Nothing changed."; return 0; }
   else
@@ -1323,7 +1338,26 @@ cmd_update() {
   [[ -n "${pinned// /}" ]] && log "Held back by IgnorePkg: $pinned"
   pkg_installed snap-pac && log "snap-pac takes a btrfs snapshot before and after this."
 
-  sudo pacman -Syu || die "pacman -Syu failed (nothing after this ran)"
+  # A new kernel series (7.2 -> 7.3) is where regressions show up. With the
+  # LTS fallback in the boot menu that's fine; without it, offer to wait.
+  local args=(-Syu) hold=() jump from to
+  jump="$(kernel_series_jump)"
+  if [[ -n "$jump" ]]; then
+    read -r from to <<<"$jump"
+    if pkg_installed linux-lts; then
+      log "New kernel series $from -> $to. If it misbehaves, pick the LTS kernel in the boot menu."
+    else
+      warn "New kernel series $from -> $to, and there's no linux-lts fallback kernel."
+      if confirm "Keep the kernel on $from for now (everything else still updates)?"; then
+        hold=(linux linux-headers)
+        pkg_installed nvidia-open && hold+=(nvidia-open)
+        args+=(--ignore "$(IFS=,; echo "${hold[*]}")")
+      fi
+    fi
+  fi
+
+  sudo pacman "${args[@]}" || die "pacman -Syu failed (nothing after this ran)"
+  (( ${#hold[@]} )) && log "Kernel held at $from. Next 'exarch update' asks again."
   if have paru; then
     log "AUR updates"
     paru -Sua || warn "some AUR updates failed"
@@ -1416,7 +1450,37 @@ cmd_doctor() {
   if reboot_pending; then row "$WARN" reboot "kernel was updated: reboot to use it"
   else row "$OK" reboot "not needed"; fi
   if [[ -n "$(nvidia_card)" ]]; then driver_summary_rows; fi
+
+  section "Kernels"
+  kernel_rows
   echo
+}
+
+# One row per installed Arch kernel: is it bootable, does it have the NVIDIA
+# module (a missing one means a black screen on that kernel).
+kernel_rows() {
+  local dir ver base nv; nv="$(nvidia_card)"
+  for dir in /usr/lib/modules/*/; do
+    [[ -f "$dir/pkgbase" ]] || continue
+    ver="$(basename "$dir")"; base="$(<"$dir/pkgbase")"
+    local note="$ver"
+    [[ "$ver" == "$(uname -r)" ]] && note="$ver (running)"
+    if [[ -n "$nv" ]] && ! find "$dir" -name 'nvidia.ko*' -print -quit 2>/dev/null | grep -q .; then
+      row "$BAD" "$base" "$note: no NVIDIA module, booting it gives no desktop (sudo pacman -S $base-headers nvidia-open-dkms)"
+    else
+      row "$OK" "$base" "$note"
+    fi
+  done
+  pkg_installed linux-lts || row "$WARN" fallback "no linux-lts fallback kernel (sudo exarch-setup re-run adds it)"
+  local esp use
+  for esp in /boot /efi; do
+    mountpoint -q "$esp" 2>/dev/null || continue
+    [[ "$(findmnt -no FSTYPE "$esp")" == vfat ]] || continue
+    use="$(df --output=avail -k "$esp" | tail -n1 | tr -dc '0-9')"
+    if (( use < 100000 )); then row "$BAD" "$esp" "only $(human_kb "$use") free: kernel updates may fail to install"
+    elif (( use < 200000 )); then row "$WARN" "$esp" "$(human_kb "$use") free on the boot partition"
+    else row "$OK" "$esp" "$(human_kb "$use") free on the boot partition"; fi
+  done
 }
 
 welcome_status_line() {

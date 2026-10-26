@@ -23,11 +23,12 @@ checksums are signed with Sigstore.
 | Apps | **LibreWolf** (browser), **Obsidian**, **Discord**. All free of charge; Obsidian and Discord are closed source |
 | Login | greetd + tuigreet (live ISO logs in automatically) |
 | Shell | **bash** in kitty: ble.sh (fish-style suggestions + syntax highlighting), starship prompt, fzf (`Ctrl-R` history, `Ctrl-T` files, `Alt-C` dirs), zoxide (`z`), eza, bat, "command not found" package hints. Personal additions go in `~/.bashrc.local` |
-| GPU | `nvidia-open` + `lib32-nvidia-utils` + `egl-wayland` + VA-API, auto-detected at boot; Mesa for Intel/AMD |
+| GPU | `nvidia-open` on the ISO, `nvidia-open-dkms` once installed (builds the driver for every kernel), `lib32-nvidia-utils`, `egl-wayland`, VA-API; Mesa for Intel/AMD |
 | Boot menu | Default · Safe graphics (nouveau + Plasma) · Rescue (text mode) |
 | Repos | core, extra, multilib, **BlackArch**, plus a local repo of AUR packages built in CI |
 | Hardening | sysctl hardening, ufw deny-incoming, AppArmor, btrfs snapshots, optional Secure Boot with your own keys |
-| Stability | zram swap (zstd, compressed RAM), systemd-oomd kills a leaking app before the desktop freezes, weekly TRIM, package cache trimmed to the last 3 versions (rollbacks keep working), journal capped at 500 MB, `exarch update` / `exarch doctor` |
+| Kernels | `linux` by default plus `linux-lts` as a fallback entry in the boot menu. `exarch update` warns before a jump to a new kernel series, `exarch doctor` checks that every kernel has its NVIDIA module |
+| Stability | zram swap (zstd, compressed RAM), systemd-oomd kills a leaking app before the desktop freezes, weekly TRIM, package cache trimmed to the last 3 versions (rollbacks keep working), journal capped at 500 MB, snapshots before and after every pacman run (at most 10, capped at 30% of the disk), one network stack (NetworkManager), `exarch update` / `exarch doctor` |
 | Wallpapers | Animated wallpapers on niri, free out of the box: Exarch's own GPU shader wallpapers (violet nebula, synthwave grid, aurora, neon logo), plus any video (mpvpaper, pauses when hidden), GIFs and images with transitions (awww), the spinning logo, and optionally **Wallpaper Engine** scenes if you own it on Steam. Picked automatically at login, changed with `exarch wallpaper` |
 
 ### Toolkit tiers
