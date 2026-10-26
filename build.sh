@@ -86,7 +86,7 @@ mv "$PROFILE/packages.tmp" "$PROFILE/packages.x86_64"
 log "$(wc -l < "$PROFILE/packages.x86_64") packages on the ISO"
 
 log "Swapping releng networking for NetworkManager"
-find "$AIROOT/etc/systemd/system" \( -name 'systemd-networkd*' -o -name 'iwd.service' \) -delete
+find "$AIROOT/etc/systemd/system" \( -name 'systemd-networkd*' -o -name 'iwd.service' \) -prune -exec rm -rf {} +
 mkdir -p "$AIROOT/etc/systemd/system/multi-user.target.wants"
 ln -sf /usr/lib/systemd/system/NetworkManager.service \
   "$AIROOT/etc/systemd/system/multi-user.target.wants/NetworkManager.service"

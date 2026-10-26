@@ -29,7 +29,14 @@ fi
 
 # paru-bin is prebuilt and quick, but breaks whenever pacman bumps libalpm
 # before paru-bin is rebuilt. Then fall back to compiling paru from source.
-paru_ok() { command -v paru &>/dev/null && paru --version &>/dev/null; }
+# Checked as the build user: paru refuses some things as root.
+paru_ok() {
+  command -v paru &>/dev/null || return 1
+  local out
+  out="$(sudo -u builder paru --version 2>&1)" && return 0
+  warn "paru --version: $out"
+  return 1
+}
 if ! paru_ok; then
   for helper in paru-bin paru; do
     log "Bootstrapping $helper"
@@ -44,7 +51,7 @@ if ! paru_ok; then
   done
   paru_ok || { warn "no working paru: building the ISO without AUR packages"; exit 0; }
 fi
-log "Using $(paru --version | head -n1)"
+log "Using $(sudo -u builder paru --version | head -n1)"
 
 mapfile -t pkgs < <(sed 's/#.*//; s/[[:space:]]//g; /^$/d' "$ROOT/packs/aur-core.txt")
 built=(); failed=()
