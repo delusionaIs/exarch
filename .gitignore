@@ -4,3 +4,4 @@ out/
 rust/*/target/
 build.log
 !config/packages.iso
+checks.log
