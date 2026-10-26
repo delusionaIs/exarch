@@ -1,12 +1,17 @@
 <p align="center"><img src="branding/logo-512.png" width="160" alt="Exarch logo"></p>
 
-<h1 align="center">E X A R C H</h1>
-<p align="center"><code>// DEFEND · ATTACK · AUTOMATE</code></p>
+<h1 align="center">Exarch</h1>
 
-A personal Arch Linux distro for DevSecOps: niri with a violet desktop shell,
-a free and open-source toolkit for containers, Kubernetes, IaC and supply-chain
-security, the BlackArch repo for security tools, NVIDIA that works out of the
-box, and a hardened default config. The ISO is built and signed in CI.
+Exarch is my own Linux distro, built on Arch. It boots into the niri tiling
+desktop (KDE Plasma is there as a fallback), sets up NVIDIA drivers on its own,
+and comes with the tools I use for coding, containers, Kubernetes and security
+testing already installed.
+
+Underneath it's still normal Arch: pacman, the AUR and the Arch Wiki all work
+the same. Exarch adds a violet theme, configs for the terminal and desktop,
+some security hardening, and an `exarch` command for updates, driver rollbacks
+and installing extra tool packs. The ISO is built with GitHub Actions and its
+checksums are signed with Sigstore.
 
 ## What's inside
 
@@ -33,7 +38,7 @@ box, and a hardened default config. The ISO is built and signed in CI.
 | Optional packs | `packs/{cloud,web,network,offensive,runtime}.txt` | AWS/Azure CLIs, Prowler, Steampipe, ZAP, Wireshark, Metasploit, hashcat, Falco... |
 | Non-free (opt-in) | `packs/nonfree.txt` | Terraform, Vault, Packer (BUSL-1.1), Burp Suite (proprietary) |
 
-`config/tools.tsv` lists every tool by DevSecOps stage (Code → Build → Test →
+`config/tools.tsv` lists every tool by workflow stage (Code → Build → Test →
 Release → Deploy → Operate → Monitor, plus Recon/Attack).
 
 Install an optional pack later:
@@ -84,7 +89,7 @@ build.sh                  build the ISO (root, on Arch)
 install.sh                turn an installed Arch system into Exarch
 config/distro.env         name, ID, publisher  <- rename the distro here
 config/packages.iso       ISO-only packages (NVIDIA, NetworkManager...)
-config/tools.tsv          tool catalogue by DevSecOps stage
+config/tools.tsv          tool catalogue by workflow stage
 packs/*.txt               package packs (strict, best-effort, AUR, optional)
 airootfs/                 files laid over the live system (also used by install.sh)
 branding/                 logo, logo mask for the 3D splash, terminal art, wallpaper
