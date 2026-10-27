@@ -83,20 +83,21 @@ shopt -s nullglob
 # on the ISO. paru installed everything it built, so check the real files.
 broken=()
 for f in "$REPO"/*.pkg.tar.zst; do
-  name="$(pacman -Qp "$f" 2>/dev/null | awk '{print $1}')"
+  name="$(pacman -Qp "$f" 2>/dev/null | awk '{print $1}')" || true
   if [[ -z "$name" ]] || ! pacman -Q "$name" &>/dev/null; then continue; fi
   missing="$(pacman -Qlq "$name" | while read -r bin; do
       [[ -f "$bin" && -x "$bin" ]] || continue
       file -b "$bin" | grep -q '^ELF' || continue
-      ldd "$bin" 2>/dev/null | awk -v b="$bin" '/not found/ { print b ": " $1 }'
-    done | head -n 3)"
+      # static binaries (Go tools) make ldd exit 1: that's fine, not broken
+      { ldd "$bin" 2>/dev/null || true; } | awk -v b="$bin" '/not found/ { print b ": " $1 }'
+    done | head -n 3)" || true
   if [[ -n "$missing" ]]; then
     warn "$name: missing libraries, left off the ISO: $(tr '\n' ' ' <<<"$missing")"
     broken+=("$name")
     rm -f "$f"
   fi
 done
-(( ${#broken[@]} )) && failed+=("${broken[@]}")
+if (( ${#broken[@]} )); then failed+=("${broken[@]}"); fi
 
 files=("$REPO"/*.pkg.tar.zst)
 if (( ${#files[@]} == 0 )); then
