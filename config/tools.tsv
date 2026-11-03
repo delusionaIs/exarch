@@ -44,9 +44,9 @@ minikube	Operate	Local Kubernetes VM/containers	core-tools
 bao	Operate	OpenBao secrets manager	core-tools
 stern	Monitor	Tail logs from many pods	core-tools
 btop	Monitor	System monitor	base
-falco	Monitor	Runtime threat detection	runtime
+falco	Monitor	Runtime threat detection (AUR)	runtime
 prowler	Monitor	AWS/Azure/GCP/k8s security assessment	cloud
-steampipe	Monitor	Query cloud APIs with SQL	cloud
+steampipe	Monitor	Query cloud APIs with SQL (AUR)	cloud
 aws	Operate	AWS CLI	cloud
 az	Operate	Azure CLI	cloud
 nmap	Recon	Network scanner	core-tools
@@ -71,16 +71,12 @@ hydra	Attack	Login brute forcer	offensive
 gcloud	Operate	Google Cloud CLI (AUR)	cloud
 aws-vault	Operate	AWS keys in the system keyring, short-lived sessions	cloud
 scout	Monitor	ScoutSuite multi-cloud security audit	cloud
-cloudsplaining	Monitor	Find risky AWS IAM policies	cloud
 pmapper	Recon	Map AWS IAM privilege-escalation paths	cloud
-cloudfox	Recon	Find attack paths in AWS/Azure/GCP accounts	cloud
 pacu	Attack	AWS exploitation framework (own/allowed accounts)	cloud
 suricata	Monitor	Network intrusion detection (IDS/IPS)	blueteam
 zeek	Monitor	Network traffic analysis and logs	blueteam
 yara	Monitor	Match files against malware rules	blueteam
 chainsaw	Monitor	Hunt through Windows event logs	blueteam
-hayabusa	Monitor	Windows event log timeline and Sigma rules	blueteam
-velociraptor	Monitor	Endpoint visibility and DFIR collection	blueteam
 osqueryi	Monitor	Query the OS with SQL	blueteam
 lynis	Monitor	Security audit of this Linux system	blueteam
 rkhunter	Monitor	Rootkit checker	blueteam
@@ -104,7 +100,6 @@ vol	Analyze	Volatility 3 memory forensics	forensics
 foremost	Analyze	Recover files by their contents	forensics
 photorec	Analyze	Recover deleted files (TestDisk)	forensics
 ddrescue	Analyze	Copy failing disks safely	forensics
-bulk_extractor	Analyze	Pull emails, URLs, keys out of images	forensics
 exiftool	Analyze	Read and strip file metadata	forensics
 virt-manager	Operate	Run lab VMs (QEMU/KVM)	labs
 openvpn	Operate	VPN for TryHackMe / Hack The Box	labs

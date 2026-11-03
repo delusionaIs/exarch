@@ -5,6 +5,4 @@ volatility3
 foremost
 testdisk
 ddrescue
-bulk_extractor@aur
-bulk-extractor@aur
 perl-image-exiftool

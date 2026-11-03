@@ -4,10 +4,6 @@ suricata
 zeek
 yara
 chainsaw
-hayabusa-bin@aur
-hayabusa@aur
-velociraptor-bin@aur
-velociraptor@aur
 osquery
 lynis
 rkhunter

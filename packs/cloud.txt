@@ -13,12 +13,7 @@ aws-vault           # AWS keys in the system keyring instead of a plain-text fil
 prowler
 scoutsuite
 steampipe-bin@aur
-steampipe@aur
 
 # IAM and attack paths
-cloudsplaining@aur
-python-cloudsplaining@aur
 pmapper
-cloudfox-bin@aur
-cloudfox@aur
 pacu
