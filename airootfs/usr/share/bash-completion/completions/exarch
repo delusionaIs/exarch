@@ -6,8 +6,8 @@ _exarch() {
     words=("${COMP_WORDS[@]}"); cword=$COMP_CWORD
   }
 
-  local cmds="status tools packs driver update doctor clean wallpaper bootsplash splash menu welcome version help"
-  local stages="Code Build Test Release Deploy Operate Monitor Recon Attack"
+  local cmds="status tools packs driver update doctor clean monitor wallpaper bootsplash splash menu welcome version help"
+  local stages="Code Build Test Release Deploy Operate Monitor Analyze Recon Attack"
   local packs_dir=/usr/share/exarch/packs
 
   if (( cword == 1 )); then
@@ -44,6 +44,15 @@ _exarch() {
         mapfile -t COMPREPLY < <(compgen -W "pick next set logo static browse status start stop restart help" -- "$cur")
       elif [[ "${words[2]}" == set ]]; then
         mapfile -t COMPREPLY < <(compgen -f -- "$cur")
+      fi
+      ;;
+    monitor|mon|display)
+      if (( cword == 2 )); then
+        mapfile -t COMPREPLY < <(compgen -W "status max set reset help" -- "$cur")
+      elif (( cword == 3 )) && [[ "${words[2]}" =~ ^(max|set|reset)$ ]]; then
+        local outs
+        outs="$(niri msg --json outputs 2>/dev/null | jq -r 'keys[]' 2>/dev/null)"
+        mapfile -t COMPREPLY < <(compgen -W "$outs --yes" -- "$cur")
       fi
       ;;
     bootsplash)

@@ -4,6 +4,7 @@ starship
 pkgfile
 fastfetch
 neovim
+nano        # simple editor for quick config edits
 tmux
 btop
 git
@@ -47,3 +48,4 @@ snap-pac
 ufw
 apparmor
 sbctl
+efibootmgr  # lists firmware boot entries (finds Windows for the clock fix)

@@ -13,6 +13,9 @@ if [[ -z "${EXARCH_NO_BLE-}" && -f /usr/share/blesh/ble.sh ]]; then
 fi
 
 # --- environment --------------------------------------------------------------
+# per-user installs (pipx, Claude Code, cargo/go tools) land in ~/.local/bin
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
+export PATH
 export EDITOR=nvim VISUAL=nvim
 export BAT_THEME=ansi                       # uses the terminal's violet palette
 export LESS='-R --mouse --use-color -Dd+m$Du+c$DP+kM -i -j.3'

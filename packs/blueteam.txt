@@ -1,0 +1,13 @@
+# Tier 1 (optional): blue team: network detection, log hunting, host auditing
+# and malware scanning. sudo exarch-setup --packs-only --packs blueteam
+suricata
+zeek
+yara
+chainsaw
+hayabusa
+velociraptor
+osquery
+lynis
+rkhunter
+clamav
+aide

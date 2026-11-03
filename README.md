@@ -36,16 +36,17 @@ checksums are signed with Sigstore.
 | Tier | Where | What |
 |---|---|---|
 | Core (on the ISO) | `packs/core-tools.txt`, `packs/aur-core.txt` | podman, docker, kubectl, helm, k9s, kind, k3d, OpenTofu, Ansible, Trivy, Checkov, Syft, Grype, gitleaks, TruffleHog, Opengrep, cosign, OPA, conftest, kubescape, kube-bench, act, OpenBao, sops, nmap, nuclei, ffuf, sqlmap... |
-| Optional packs | `packs/{cloud,web,network,offensive,runtime}.txt` | AWS/Azure CLIs, Prowler, Steampipe, ZAP, Wireshark, Metasploit, hashcat, Falco... |
+| Optional packs | `packs/{cloud,blueteam,forensics,reversing,labs,web,network,offensive,runtime}.txt` | **cloud**: AWS/Azure/Google Cloud CLIs, aws-vault, Prowler, ScoutSuite, Steampipe, Cloudsplaining, PMapper, CloudFox, Pacu. **blueteam**: Suricata, Zeek, YARA, Chainsaw, Hayabusa, Velociraptor, osquery, Lynis, ClamAV. **forensics**: Sleuth Kit, Volatility 3, TestDisk, ExifTool. **reversing**: Ghidra, radare2, rizin, gdb + pwndbg, pwntools, ImHex. **labs**: QEMU/KVM + virt-manager for practice VMs, OpenVPN and WireGuard for TryHackMe / Hack The Box. Plus ZAP, Wireshark, Metasploit, hashcat, Falco... |
 | Non-free (opt-in) | `packs/nonfree.txt` | Terraform, Vault, Packer (BUSL-1.1), Burp Suite (proprietary) |
 
 `config/tools.tsv` lists every tool by workflow stage (Code → Build → Test →
-Release → Deploy → Operate → Monitor, plus Recon/Attack).
+Release → Deploy → Operate → Monitor, plus Analyze/Recon/Attack).
 
 Install an optional pack later:
 
 ```bash
 exarch packs install cloud,web
+exarch packs install blueteam,forensics,reversing,labs
 exarch packs install nonfree --accept-nonfree
 ```
 

@@ -1,6 +1,21 @@
-# Tier 1 (optional): cloud security. sudo exarch-setup --packs-only --packs cloud
+# Tier 1 (optional): cloud security. CLIs for AWS, Azure and Google Cloud,
+# posture scanners and IAM analysis. sudo exarch-setup --packs-only --packs cloud
+# Names ending in @aur are community packages from the AUR (built with paru).
+# The IAM/attack-path tools: only on accounts you own or are allowed to test.
+
+# Cloud CLIs
 aws-cli-v2
 azure-cli
+google-cloud-cli@aur
+aws-vault           # AWS keys in the system keyring instead of a plain-text file
+
+# Posture and misconfiguration scanners (AWS/Azure/GCP/Kubernetes)
 prowler
+scoutsuite
 steampipe
+
+# IAM and attack paths
+cloudsplaining
+pmapper
+cloudfox
 pacu

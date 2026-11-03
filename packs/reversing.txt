@@ -1,0 +1,15 @@
+# Tier 1 (optional): reverse engineering and binary analysis: CTFs, crackmes,
+# looking inside programs. sudo exarch-setup --packs-only --packs reversing
+ghidra
+radare2
+rizin
+gdb
+pwndbg
+python-pwntools
+binwalk
+imhex
+hexyl
+checksec
+strace
+ltrace
+upx

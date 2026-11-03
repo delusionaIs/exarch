@@ -1,0 +1,9 @@
+# Tier 1 (optional): digital forensics: disk images, memory dumps, deleted
+# files, metadata. sudo exarch-setup --packs-only --packs forensics
+sleuthkit
+volatility3
+foremost
+testdisk
+ddrescue
+bulk_extractor
+perl-image-exiftool

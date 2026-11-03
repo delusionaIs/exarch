@@ -1,0 +1,12 @@
+# Tier 1 (optional): practice labs: run vulnerable VMs on your PC (QEMU/KVM with
+# virt-manager) and VPN into TryHackMe / Hack The Box. Also turns on libvirt and
+# adds you to its group. sudo exarch-setup --packs-only --packs labs
+qemu-desktop
+libvirt
+virt-manager
+dnsmasq
+edk2-ovmf
+swtpm
+openvpn
+networkmanager-openvpn
+wireguard-tools

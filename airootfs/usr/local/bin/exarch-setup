@@ -151,9 +151,11 @@ install_pack() {
     return 0
   fi
 
-  local ok=() missing=()
+  local ok=() missing=() aur=()
   for p in "${want[@]}"; do
-    if pacman -Si "$p" &>/dev/null || pacman -Sg "$p" &>/dev/null; then ok+=("$p"); else missing+=("$p"); fi
+    if [[ "$p" == *@aur ]]; then aur+=("${p%@aur}")
+    elif pacman -Si "$p" &>/dev/null || pacman -Sg "$p" &>/dev/null; then ok+=("$p")
+    else missing+=("$p"); fi
   done
   if (( ${#missing[@]} )); then
     warn "pack $pack: not in the repos, skipped: ${missing[*]}"
@@ -162,6 +164,40 @@ install_pack() {
     log "Installing pack: $pack (${#ok[@]} packages)"
     pacman -S --needed --noconfirm "${ok[@]}"
   fi
+  # Names marked @aur in a pack: community packages, said out loud
+  if (( ${#aur[@]} )); then
+    if ensure_paru; then
+      log "pack $pack: from the AUR (community packages): ${aur[*]}"
+      for p in "${aur[@]}"; do
+        sudo -u "$USER_NAME" paru -S --needed --noconfirm "$p" || warn "AUR: $p failed, skipped"
+      done
+    else
+      warn "pack $pack: no working AUR helper, skipped: ${aur[*]}"
+    fi
+  fi
+  pack_post "$pack"
+}
+
+# Setup a pack needs beyond installing packages
+pack_post() {
+  case "$1" in
+    labs)
+      pacman -Q libvirt &>/dev/null || return 0
+      log "labs: turning on libvirt, adding $USER_NAME to the libvirt group"
+      systemctl enable --now libvirtd.service || warn "couldn't start libvirtd"
+      usermod -aG libvirt "$USER_NAME"
+      # the default NAT network for VMs, started now and at boot
+      virsh -c qemu:///system net-autostart default &>/dev/null || true
+      virsh -c qemu:///system net-start default &>/dev/null || true
+      # ufw drops forwarded traffic by default: let VMs on virbr0 reach the internet
+      if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q 'Status: active'; then
+        ufw allow in on virbr0 >/dev/null
+        ufw route allow in on virbr0 >/dev/null
+        ufw route allow out on virbr0 >/dev/null
+      fi
+      log "labs: log out and back in once, then open Virtual Machine Manager"
+      ;;
+  esac
 }
 
 if (( PACKS_ONLY )); then
@@ -256,6 +292,42 @@ for rc in .bashrc .bash_profile .inputrc; do
 done
 [[ -f "$USER_HOME/.bashrc.pre-exarch" ]] &&
   log "Your previous ~/.bashrc is at ~/.bashrc.pre-exarch (put your own lines in ~/.bashrc.local)"
+
+# Keyboard: Exarch's niri config defaults to German. Use the layout picked in
+# the installer instead (only while the config still has that default).
+xkb_layout() {
+  local x k
+  x="$(localectl status 2>/dev/null | awk -F': *' '/X11 Layout/ { print $2; exit }')"
+  x="${x%%,*}"
+  if [[ -z "$x" || "$x" == n/a ]]; then
+    k="$(sed -n 's/^KEYMAP=//p' /etc/vconsole.conf 2>/dev/null | tr -d '"')"
+    case "$k" in
+      "") return 0 ;;
+      uk) x=gb ;;
+      de_CH*|fr_CH*) x=ch ;;
+      *) x="${k%%[-_]*}"; x="${x%%[0-9]*}" ;;
+    esac
+  fi
+  # only a layout xkb actually knows
+  [[ -n "$x" && -f "/usr/share/X11/xkb/symbols/$x" ]] && echo "$x"
+}
+kb="$(xkb_layout || true)"
+if [[ -n "$kb" && "$kb" != de ]]; then
+  for cfg in /etc/skel/.config/niri/config.kdl "$USER_HOME/.config/niri/config.kdl"; do
+    if [[ ! -f "$cfg" ]] || ! grep -qE '^[[:space:]]*layout "de"$' "$cfg"; then continue; fi
+    sed -i -E 's/^([[:space:]]*)layout "de"$/\1layout "'"$kb"'"/' "$cfg"
+  done
+  log "Keyboard layout for niri: $kb (from the installer)"
+fi
+
+# Dual boot: Windows keeps the hardware clock in local time, Linux in UTC, so
+# one of them always shows the wrong time. Match Windows when it's installed.
+if command -v efibootmgr &>/dev/null && efibootmgr 2>/dev/null | grep -qi 'Windows Boot Manager' &&
+   [[ "$(timedatectl show -p LocalRTC --value 2>/dev/null)" == no ]]; then
+  if timedatectl set-local-rtc 1 --adjust-system-clock 2>/dev/null; then
+    log "Windows found: hardware clock set to local time, so both systems show the right time"
+  fi
+fi
 
 if [[ "$(getent passwd "$USER_NAME" | cut -d: -f7)" != */bash ]]; then
   log "Setting bash as $USER_NAME's shell"

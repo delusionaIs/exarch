@@ -68,3 +68,44 @@ msfconsole	Attack	Metasploit Framework	offensive
 hashcat	Attack	GPU password recovery	offensive
 john	Attack	John the Ripper	offensive
 hydra	Attack	Login brute forcer	offensive
+gcloud	Operate	Google Cloud CLI (AUR)	cloud
+aws-vault	Operate	AWS keys in the system keyring, short-lived sessions	cloud
+scout	Monitor	ScoutSuite multi-cloud security audit	cloud
+cloudsplaining	Monitor	Find risky AWS IAM policies	cloud
+pmapper	Recon	Map AWS IAM privilege-escalation paths	cloud
+cloudfox	Recon	Find attack paths in AWS/Azure/GCP accounts	cloud
+pacu	Attack	AWS exploitation framework (own/allowed accounts)	cloud
+suricata	Monitor	Network intrusion detection (IDS/IPS)	blueteam
+zeek	Monitor	Network traffic analysis and logs	blueteam
+yara	Monitor	Match files against malware rules	blueteam
+chainsaw	Monitor	Hunt through Windows event logs	blueteam
+hayabusa	Monitor	Windows event log timeline and Sigma rules	blueteam
+velociraptor	Monitor	Endpoint visibility and DFIR collection	blueteam
+osqueryi	Monitor	Query the OS with SQL	blueteam
+lynis	Monitor	Security audit of this Linux system	blueteam
+rkhunter	Monitor	Rootkit checker	blueteam
+clamscan	Monitor	ClamAV malware scanner	blueteam
+aide	Monitor	File integrity checker	blueteam
+ghidra	Analyze	NSA's reverse engineering suite (GUI)	reversing
+r2	Analyze	radare2 reverse engineering framework	reversing
+rizin	Analyze	Reverse engineering framework (radare2 fork)	reversing
+gdb	Analyze	GNU debugger	reversing
+pwndbg	Analyze	gdb with exploit-dev and RE helpers	reversing
+pwn	Analyze	pwntools CLI for CTF binaries	reversing
+binwalk	Analyze	Find and extract files inside firmware	reversing
+imhex	Analyze	Hex editor for reverse engineers	reversing
+hexyl	Analyze	Colored hex viewer	reversing
+checksec	Analyze	Show a binary's security hardening	reversing
+strace	Analyze	Trace a program's system calls	reversing
+ltrace	Analyze	Trace a program's library calls	reversing
+upx	Analyze	Pack/unpack executables	reversing
+fls	Analyze	Sleuth Kit: list files in a disk image	forensics
+vol	Analyze	Volatility 3 memory forensics	forensics
+foremost	Analyze	Recover files by their contents	forensics
+photorec	Analyze	Recover deleted files (TestDisk)	forensics
+ddrescue	Analyze	Copy failing disks safely	forensics
+bulk_extractor	Analyze	Pull emails, URLs, keys out of images	forensics
+exiftool	Analyze	Read and strip file metadata	forensics
+virt-manager	Operate	Run lab VMs (QEMU/KVM)	labs
+openvpn	Operate	VPN for TryHackMe / Hack The Box	labs
+wg	Operate	WireGuard VPN	labs

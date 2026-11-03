@@ -49,7 +49,7 @@ DISTRO_ID="exarch"
 
 TOOLS_TSV="$DATA/config/tools.tsv"
 PACKS_DIR="$DATA/packs"
-STAGES=(Code Build Test Release Deploy Operate Monitor Recon Attack)
+STAGES=(Code Build Test Release Deploy Operate Monitor Analyze Recon Attack)
 DEFAULT_PACKS=(desktop base core-tools aur-core aur-wallpaper)
 # Full-screen tools: launched directly instead of showing --help first
 TUI_TOOLS=" lazygit k9s lazydocker btop nvim msfconsole "
@@ -71,7 +71,7 @@ log()  { printf '%s[exarch]%s %s\n' "$B$V" "$N" "$*"; }
 warn() { printf '%s[exarch]%s %s\n' "$B$Y" "$N" "$*" >&2; }
 die()  { printf '%s[exarch]%s %s\n' "$B$R" "$N" "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
-clean_list() { sed 's/#.*//; s/[[:space:]]//g; /^$/d' "$@"; }
+clean_list() { sed 's/#.*//; s/[[:space:]]//g; s/@aur$//; /^$/d' "$@"; }
 is_live() { [[ -d /run/archiso ]]; }
 interactive() { [[ -t 0 && -t 1 ]]; }
 section() { printf '\n  %s%s%s\n' "$B$V" "$1" "$N"; }

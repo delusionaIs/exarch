@@ -23,6 +23,7 @@ soft=0
 check() { # file, strict(1/0)
   local f="$1" strict="$2" pkg
   while read -r pkg; do
+    [[ "$pkg" == *@aur ]] && continue   # AUR, not in the repos
     if ! pacman --config "$conf" -Si "$pkg" &>/dev/null && ! pacman --config "$conf" -Sg "$pkg" &>/dev/null; then
       if (( strict )); then
         echo "MISSING  $pkg  ($(basename "$f"))  <- breaks the ISO build"
