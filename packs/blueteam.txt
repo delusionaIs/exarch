@@ -4,8 +4,10 @@ suricata
 zeek
 yara
 chainsaw
-hayabusa
-velociraptor
+hayabusa-bin@aur
+hayabusa@aur
+velociraptor-bin@aur
+velociraptor@aur
 osquery
 lynis
 rkhunter

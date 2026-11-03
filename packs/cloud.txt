@@ -12,10 +12,13 @@ aws-vault           # AWS keys in the system keyring instead of a plain-text fil
 # Posture and misconfiguration scanners (AWS/Azure/GCP/Kubernetes)
 prowler
 scoutsuite
-steampipe
+steampipe-bin@aur
+steampipe@aur
 
 # IAM and attack paths
-cloudsplaining
+cloudsplaining@aur
+python-cloudsplaining@aur
 pmapper
-cloudfox
+cloudfox-bin@aur
+cloudfox@aur
 pacu

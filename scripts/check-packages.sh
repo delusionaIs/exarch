@@ -20,10 +20,21 @@ pacman --config "$conf" -Sl multilib 2>/dev/null | grep -q . ||
 
 hard=0
 soft=0
+# @aur names: ask the AUR's web API whether the package exists
+aur_exists() {
+  curl -fsS --max-time 20 "https://aur.archlinux.org/rpc/v5/info?arg%5B%5D=$1" 2>/dev/null |
+    grep -q "\"Name\":\"$1\""
+}
 check() { # file, strict(1/0)
   local f="$1" strict="$2" pkg
   while read -r pkg; do
-    [[ "$pkg" == *@aur ]] && continue   # AUR, not in the repos
+    if [[ "$pkg" == *@aur ]]; then
+      if command -v curl &>/dev/null && ! aur_exists "${pkg%@aur}"; then
+        echo "warning: ${pkg%@aur} not found in the AUR ($(basename "$f")), will be skipped"
+        soft=$((soft + 1))
+      fi
+      continue
+    fi
     if ! pacman --config "$conf" -Si "$pkg" &>/dev/null && ! pacman --config "$conf" -Sg "$pkg" &>/dev/null; then
       if (( strict )); then
         echo "MISSING  $pkg  ($(basename "$f"))  <- breaks the ISO build"
