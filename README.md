@@ -63,6 +63,7 @@ welcome screen (it also opens once at first login, and from the bar's logo).
 | `exarch packs install cloud,web` | Installs packs through `exarch-setup` (asks for sudo) and refreshes the launcher entries |
 | `exarch update` | Shows Arch news posted since your last upgrade (the "manual intervention" posts) and asks first, then `pacman -Syu` + AUR, then lists `.pacnew` files, failed services and whether to reboot |
 | `exarch doctor` | One-screen health check: failed services, journal errors, RAM, zram, oomd, the 5 biggest memory users, disk space, days since update, pacnew, orphans, pending reboot, NVIDIA |
+| `exarch monitor` | Your screens with the current refresh rate, the best one available and VRR support. `max` switches every screen (or one: `max HDMI-A-1`) to its highest rate, `set DP-1 1920x1080@240` picks one, `reset` hands it back to niri. A new rate is tested live and only saved after you confirm, otherwise it switches back after 15 seconds |
 | `exarch clean` | Frees disk space safely: package cache down to the last 2 versions (rollback still works), unused dependencies (asks first), journal to 200 MB, AUR build cache, thumbnails |
 | `exarch bootsplash on` / `off` | Exarch boot splash (Plymouth): the logo with a breathing violet glow, a progress line and a themed disk-unlock prompt. Adds the initramfs hook and `quiet splash` to systemd-boot/GRUB/UKI command lines (backups kept), and `off` puts everything back |
 | `exarch driver` | NVIDIA packages and versions, the loaded module, pin state, and older versions in the pacman cache |

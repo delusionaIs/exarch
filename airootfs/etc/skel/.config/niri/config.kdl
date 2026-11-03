@@ -23,7 +23,8 @@ input {
     focus-follows-mouse max-scroll-amount="0%"
 }
 
-// Example for a 360 Hz monitor. Find your output name with: niri msg outputs
+// Refresh rate: easiest is `exarch monitor max` (tests it live, asks before saving).
+// By hand, e.g. for a 360 Hz monitor. Find your output name with: niri msg outputs
 // output "DP-1" {
 //     mode "1920x1080@360.000"
 //     variable-refresh-rate on-demand=true

@@ -21,6 +21,7 @@
 #   exarch update                   Arch news check, full upgrade (+AUR), then what needs attention
 #   exarch doctor                   health check: failed services, disk, memory hogs, pacnew, reboot...
 #   exarch clean                    free disk space (package cache, orphans, journal) safely
+#   exarch monitor [max|set|reset]  screen refresh rates: show, go to the highest, pick one, undo
 #   exarch bootsplash [on|off]      Exarch boot splash (Plymouth): logo, glow, themed unlock prompt
 #   exarch version
 set -uo pipefail
@@ -1243,6 +1244,269 @@ cmd_bootsplash() {
 }
 
 # =============================================================================
+# monitor: refresh rates on niri (test live, keep only after you confirm)
+# =============================================================================
+NIRI_CFG="${NIRI_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/niri/config.kdl}"
+MON_BEGIN="// exarch-monitor:begin (managed by 'exarch monitor', 'exarch monitor reset' removes it)"
+MON_END="// exarch-monitor:end"
+
+# millihertz -> "359.979" (niri's mode format) / "360 Hz" (for people)
+mhz_exact() { printf '%d.%03d' $(( $1 / 1000 )) $(( $1 % 1000 )); }
+mhz_human() { printf '%d Hz' $(( ($1 + 500) / 1000 )); }
+
+mon_need() {
+  have niri || die "niri isn't installed"
+  have jq || die "jq is missing: sudo pacman -S jq"
+  niri msg --json outputs >/dev/null 2>&1 \
+    || die "can't reach niri: run this in a terminal inside your niri session"
+}
+
+# One TSV row per screen:
+# name make model on|off w h cur_mhz best_mhz_at_this_res vrr_supported vrr_enabled rates
+mon_rows() {
+  niri msg --json outputs | jq -r '
+    to_entries | sort_by(.key) | .[] | .value as $o
+    | if $o.current_mode == null then
+        [$o.name, $o.make, $o.model, "off", 0, 0, 0, 0, $o.vrr_supported, $o.vrr_enabled, "-"]
+      else
+        $o.modes[$o.current_mode] as $c
+        | [$o.modes[] | select(.width == $c.width and .height == $c.height) | .refresh_rate] as $r
+        | [$o.name, $o.make, $o.model, "on", $c.width, $c.height, $c.refresh_rate, ($r | max),
+           $o.vrr_supported, $o.vrr_enabled,
+           ($r | map(. / 1000 | round) | unique | reverse | map(tostring) | join(", "))]
+      end | map(tostring | if . == "" then "-" else . end) | @tsv'
+}
+
+# Exact refresh (millihertz) of the available WxH mode closest to WANT_MHZ
+# (0 = the highest one). Empty if the screen has no WxH mode.
+mon_pick() {
+  local name="$1" w="$2" h="$3" want="$4"
+  niri msg --json outputs | jq -r --arg n "$name" --argjson w "$w" --argjson h "$h" --argjson want "$want" '
+    [.[$n].modes[]? | select(.width == $w and .height == $h) | .refresh_rate] as $r
+    | if ($r | length) == 0 then empty
+      elif $want == 0 then ($r | max)
+      else ($r | min_by(. - $want | fabs)) end'
+}
+
+# The managed block's entries as "NAME<TAB>MODE" lines
+mon_cfg_entries() {
+  [[ -f "$NIRI_CFG" ]] || return 0
+  awk -v b="$MON_BEGIN" -v e="$MON_END" '
+    $0 == b { inb = 1; next }
+    $0 == e { inb = 0; next }
+    inb && match($0, /^output "[^"]+"/) { name = substr($0, 9, RLENGTH - 9) }
+    inb && name != "" && match($0, /mode "[^"]+"/) { print name "\t" substr($0, RSTART + 6, RLENGTH - 7); name = "" }
+  ' "$NIRI_CFG"
+}
+
+# Does the user's own part of the config (outside our block) set up this output?
+mon_cfg_has_own() {
+  [[ -f "$NIRI_CFG" ]] || return 1
+  awk -v b="$MON_BEGIN" -v e="$MON_END" -v n="$1" '
+    $0 == b { inb = 1; next }
+    $0 == e { inb = 0; next }
+    !inb && $0 ~ "^[[:space:]]*output[[:space:]]+\"" n "\"" { found = 1 }
+    END { exit !found }' "$NIRI_CFG"
+}
+
+# Rewrite the managed block: set NAME to MODE, or drop NAME if MODE is empty
+# (NAME empty + MODE empty = drop everything). Validated before it's written.
+mon_cfg_write() {
+  local name="$1" mode="$2" tmp entries n m
+  if [[ ! -f "$NIRI_CFG" ]]; then
+    [[ -f /etc/skel/.config/niri/config.kdl ]] \
+      || die "no niri config at $NIRI_CFG to add the setting to"
+    mkdir -p "$(dirname "$NIRI_CFG")"
+    cp /etc/skel/.config/niri/config.kdl "$NIRI_CFG"
+    log "Created $NIRI_CFG from the Exarch default."
+  fi
+  entries="$(mon_cfg_entries | awk -F'\t' -v n="$name" 'n != "" && $1 != n')"
+  [[ -n "$name" && -n "$mode" ]] && entries+="${entries:+$'\n'}$name"$'\t'"$mode"
+
+  # next to the real file, so relative includes still resolve for validation
+  tmp="$(mktemp "$(dirname "$NIRI_CFG")/.exarch-monitor.XXXXXX")"
+  awk -v b="$MON_BEGIN" -v e="$MON_END" '
+    $0 == b { inb = 1; next }
+    $0 == e { inb = 0; next }
+    !inb' "$NIRI_CFG" > "$tmp"
+  if [[ -n "$entries" ]]; then
+    # drop trailing blank lines, then append the block
+    sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$tmp"
+    {
+      printf '\n%s\n' "$MON_BEGIN"
+      while IFS=$'\t' read -r n m; do
+        [[ -n "$n" ]] || continue
+        printf 'output "%s" {\n    mode "%s"\n}\n' "$n" "$m"
+      done <<<"$entries"
+      printf '%s\n' "$MON_END"
+    } >> "$tmp"
+  fi
+  if ! niri validate -c "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"
+    warn "The new config didn't pass 'niri validate', so nothing was written. Your config is unchanged."
+    return 1
+  fi
+  cp -p "$NIRI_CFG" "$NIRI_CFG.exarch-bak"
+  cat "$tmp" > "$NIRI_CFG"   # keeps symlinked dotfiles intact
+  rm -f "$tmp"
+}
+
+# Ask to keep a mode that's already live. No answer in 15 s counts as no,
+# so a black screen fixes itself.
+mon_keep() {
+  local ans
+  printf '  %sLooks right? Keep it [y/N]%s (switches back in 15 s): ' "$B" "$N"
+  if read -r -t 15 ans </dev/tty && [[ "$ans" =~ ^[YyJj] ]]; then return 0; fi
+  echo
+  return 1
+}
+
+# mon_apply NAME OLD_MODE NEW_MODE OLD_LABEL NEW_LABEL YES
+# Switch live, ask (unless YES), then save. Anything that fails switches back.
+mon_apply() {
+  local name="$1" old="$2" mode="$3" from="$4" to="$5" yes="$6"
+  if mon_cfg_has_own "$name"; then
+    warn "$name already has its own output block in $NIRI_CFG. Set it there:  mode \"$mode\""
+    return 1
+  fi
+  log "$name: $from -> $to  ($mode)"
+  if [[ "$mode" != "$old" ]]; then
+    niri msg output "$name" mode "$mode" >/dev/null || { warn "niri refused $mode on $name"; return 1; }
+    if (( ! yes )) && ! mon_keep; then
+      mon_revert "$name" "$old"
+      log "Switched $name back to $from. Nothing saved."
+      return 1
+    fi
+  fi
+  if ! mon_cfg_write "$name" "$mode"; then
+    mon_revert "$name" "$old"
+    return 1
+  fi
+  log "Saved: $name stays at $to after reboots."
+}
+
+mon_revert() { niri msg output "$1" mode "$2" >/dev/null 2>&1 || niri msg output "$1" mode auto >/dev/null 2>&1; }
+
+mon_status() {
+  local rows n mk md on w h cur best vs ve rates any=0 behind=0
+  rows="$(mon_rows)"
+  section "Monitors"
+  echo
+  local label
+  while IFS=$'\t' read -r n mk md on w h cur best vs ve rates; do
+    [[ -n "$n" ]] || continue
+    any=1
+    label="$mk $md"; label="${label//- /}"; label="${label% -}"
+    if [[ "$on" == off ]]; then
+      row "$NO" "$n" "$label  (off)"
+      continue
+    fi
+    if (( cur < best - 500 )); then
+      row "$WARN" "$n" "$label"; behind=1
+    else
+      row "$OK" "$n" "$label"
+    fi
+    printf '  %14s now %s%sx%s @ %s%s   best at this resolution: %s\n' "" "$B" "$w" "$h" "$(mhz_human "$cur")" "$N" "$(mhz_human "$best")"
+    printf '  %14s %savailable: %s Hz   VRR: %s%s\n' "" "$D" "$rates" \
+      "$([[ "$vs" == true ]] && { [[ "$ve" == true ]] && echo on || echo "supported, off"; } || echo "not supported")" "$N"
+    [[ "$n" == HDMI* ]] && printf '  %14s %sconnected over HDMI: if the monitor is rated higher than %s, use a DisplayPort cable%s\n' "" "$D" "$(mhz_human "$best")" "$N"
+  done <<<"$rows"
+  (( any )) || row "$WARN" "monitors" "niri reports no screens"
+  echo
+  (( behind )) && printf '  %sSome screens run below their best rate: %sexarch monitor max%s\n\n' "$Y" "$B" "$N"
+  local saved; saved="$(mon_cfg_entries)"
+  [[ -n "$saved" ]] && printf '  %sSaved by exarch monitor:%s %s\n\n' "$D" "$N" "$(tr '\t\n' '  ' <<<"$saved")"
+  return 0
+}
+
+mon_help() {
+  cat <<EOF
+
+  ${B}${V}exarch monitor${N}   refresh rates for your screens (niri)
+
+  ${B}exarch monitor${N}                 screens, current rate, best rate, VRR
+  ${B}exarch monitor max${N} [SCREEN]    switch to the highest rate at the current resolution
+  ${B}exarch monitor set${N} SCREEN MODE e.g. ${D}exarch monitor set DP-1 1920x1080@240${N}
+  ${B}exarch monitor reset${N} [SCREEN]  back to niri's automatic choice
+  ${D}--yes${N}                          keep without asking (max/set)
+
+  A new rate is tested live first. You get 15 seconds to confirm with ${B}y${N},
+  otherwise it switches back (so a black screen fixes itself). Only
+  confirmed rates are saved, in a marked block in ${D}~/.config/niri/config.kdl${N}.
+
+EOF
+}
+
+cmd_monitor() {
+  local sub="${1:-status}"; shift || true
+  local yes=0 args=() a
+  for a in "$@"; do
+    case "$a" in
+      -y|--yes) yes=1 ;;
+      *) args+=("$a") ;;
+    esac
+  done
+  case "$sub" in
+    help|-h|--help) mon_help; return 0 ;;
+  esac
+  mon_need
+  if [[ "$sub" =~ ^(max|set)$ ]] && (( ! yes )) && ! interactive; then
+    die "exarch monitor $sub asks before keeping a new rate: run it in a terminal, or add --yes"
+  fi
+  local rows n mk md on w h cur best vs ve rates found=0 new rc=0
+  case "$sub" in
+    status|st|ls|list) mon_status ;;
+    max)
+      local target="${args[0]:-}"
+      rows="$(mon_rows)"
+      while IFS=$'\t' read -r n mk md on w h cur best vs ve rates; do
+        [[ -n "$n" && "$on" == on ]] || continue
+        [[ -z "$target" || "$n" == "$target" ]] || continue
+        found=1
+        if (( cur >= best - 500 )); then
+          log "$n: already at its best rate, $(mhz_human "$cur") at ${w}x${h}"
+          continue
+        fi
+        mon_apply "$n" "${w}x${h}@$(mhz_exact "$cur")" "${w}x${h}@$(mhz_exact "$best")" \
+          "$(mhz_human "$cur")" "$(mhz_human "$best")" "$yes" || rc=1
+      done <<<"$rows"
+      (( found )) || die "no active screen${target:+ named $target} (see: exarch monitor)"
+      ;;
+    set)
+      local target="${args[0]:-}" want="${args[1]:-}" ww wh wr=0 wmhz
+      [[ -n "$target" && -n "$want" ]] || die "usage: exarch monitor set SCREEN WIDTHxHEIGHT[@HZ]   (e.g. DP-1 1920x1080@240)"
+      [[ "$want" =~ ^([0-9]+)x([0-9]+)(@([0-9]+(\.[0-9]+)?))?$ ]] || die "mode looks like 1920x1080@240, not '$want'"
+      ww="${BASH_REMATCH[1]}"; wh="${BASH_REMATCH[2]}"; wr="${BASH_REMATCH[4]:-0}"
+      wmhz="$(awk -v r="$wr" 'BEGIN { printf "%d", r * 1000 + 0.5 }')"
+      rows="$(mon_rows)"
+      while IFS=$'\t' read -r n mk md on w h cur best vs ve rates; do
+        [[ "$n" == "$target" ]] || continue
+        found=1
+        [[ "$on" == on ]] || die "$n is turned off"
+        new="$(mon_pick "$n" "$ww" "$wh" "$wmhz")"
+        [[ -n "$new" ]] || die "$n has no ${ww}x${wh} mode (see: exarch monitor)"
+        local from to
+        from="$(mhz_human "$cur")"; to="$(mhz_human "$new")"
+        if [[ "$ww" != "$w" || "$wh" != "$h" ]]; then
+          from="${w}x${h} @ $from"; to="${ww}x${wh} @ $to"
+        fi
+        mon_apply "$n" "${w}x${h}@$(mhz_exact "$cur")" "${ww}x${wh}@$(mhz_exact "$new")" \
+          "$from" "$to" "$yes" || rc=1
+      done <<<"$rows"
+      (( found )) || die "no screen named $target (see: exarch monitor)"
+      ;;
+    reset)
+      local target="${args[0]:-}"
+      if [[ -z "$(mon_cfg_entries)" ]]; then log "Nothing saved by exarch monitor, niri already picks the mode."; return 0; fi
+      mon_cfg_write "$target" "" || return 1
+      log "Removed ${target:-all screens} from the saved settings. niri picks the mode again."
+      ;;
+    *) die "unknown: exarch monitor $sub (status, max, set, reset, help)" ;;
+  esac
+  return "$rc"
+}
+
+# =============================================================================
 # clean: reclaim disk space without breaking rollbacks
 # =============================================================================
 cmd_clean() {
@@ -1562,6 +1826,7 @@ main() {
     update|up) cmd_update ;;
     clean) cmd_clean ;;
     bootsplash|splashscreen) cmd_bootsplash "$@" ;;
+    monitor|mon|display) cmd_monitor "$@" ;;
     doctor|doc) cmd_doctor ;;
     version|--version|-V) echo "exarch $EXARCH_CMD_VERSION ($DISTRO_NAME, data: $DATA)" ;;
     help|-h|--help) usage ;;
